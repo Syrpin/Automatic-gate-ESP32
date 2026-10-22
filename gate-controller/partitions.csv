@@ -1,0 +1,12 @@
+# Name,   Type, SubType,  Offset,   Size,     Flags
+# 16 MB flash (N16R8). Signed-OTA layout prepared now, Secure Boot OFF (plan p.9.2).
+nvs,      data, nvs,      0x9000,   0x40000,
+otadata,  data, ota,      0x49000,  0x8000,
+phy_init, data, phy,      0x51000,  0x4000,
+# Event journal (JSONL batches), separate from nvs to avoid wear on config area
+log,      data, nvs,      0x55000,  0x100000,
+# Vision models: int8 tflite blobs, hot-swappable, versioned, rollback-capable
+model_a,  data, ,         0x155000, 0x400000,
+model_b,  data, ,         0x555000, 0x400000,
+ota_0,    app,  ota_0,    0x955000, 0x300000,
+ota_1,    app,  ota_1,    0xC55000, 0x300000,
