@@ -68,6 +68,7 @@ static void telemetry_task(void *arg)
     (void)arg;
     TickPeriod_t tp; tp.period_ms = TELEMETRY_MS;
     for (;;) {
+        tp.now_ms = (uint32_t)(esp_timer_get_time()/1000);
         telemetry_snapshot_t s;
         gate_logic_snapshot(&s);
         ESP_LOGI(TAG, "pos=%d tgt=%d state=%d I_rms=%.2fA batt=%.2fV mains=%d",

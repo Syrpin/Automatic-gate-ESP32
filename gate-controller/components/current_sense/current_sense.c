@@ -39,8 +39,6 @@ void current_sense_sample(const TickPeriod_t *tp){
         if(rms_last>c->i_rms_peak_max) inrush_hit=true;
     }
 }
-#if 0
-#endif
 float current_rms(void){return rms_last;}
 bool current_over_run(uint32_t h){(void)h;return over_latched;}
 bool current_over_inrush(void){return inrush_hit;}
