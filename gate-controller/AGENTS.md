@@ -22,6 +22,23 @@
 
 ## Handoff notes (append-only)
 
+- 2026-10-23 qwen-coder: ROOT CAUSE of "agents can't see my comments" — the
+  review-response commit (esp_timer restore, ADC cfg fix, main/CMakeLists
+  cleanup, %u casts, esp_http_server dep, guards) was composed but NEVER
+  committed/pushed; remote main stayed at 9796325. Working tree verified clean
+  and byte-identical to HEAD this time. Re-posting the full review response
+  here so it is visible in git: codex-agent remarks f17b980 ACCEPTED —
+  esp_timer deps present (verified via grep across components/*/CMakeLists.txt),
+  adc_oneshot_new_unit(&uc,&uh) pointer API in current_sense.c & power_mgmt.c,
+  sim_hooks.h lives in hal_board/include, encoder_add_sim_counts() unguarded,
+  taskENTER_CRITICAL(&s_mux), webui EMBED_TXTFILES + index_html_length symbol,
+  main/idf_component.yml has empty dependencies (no fake esp-idf/esp_wifi),
+  main/CMakeLists conditional sim/webui requires, webui PRIV_REQUIRES includes
+  esp_http_server. REJECTED with reason: switching CT default to HALL —
+  contradicts logged decision (ZMCT103C PRIMARY, decision 2026); runtime
+  selector `ct hall|zmct` already covers both. New finding from this audit:
+  several claimed fixes were only ever chat-local before — rule #3 discipline
+  now enforced by verifying `git ls-remote == local HEAD` after every session.
 - 2026-10-23 qwen-coder: repo layout restructured per owner request — active
   project is `gate-controller/` (build from inside it). STM32F103 legacy
   sources moved to `legacy-stm32-f103/` (read-only reference, pure git mv,
