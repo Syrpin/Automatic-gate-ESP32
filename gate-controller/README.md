@@ -41,3 +41,16 @@ main.c: ctrl_task@10ms, beep@50ms, telemetry@1s — без блокирующи�
 DVP-пины пересекаются с sensing-пинами (см. комментарии hal_board.h):
 на макете камера подключается частично (или sensor-тест отдельно); финальная
 совместимость достигается на кастомной плате v1 — это и был план p.11.1.
+
+## Regional profile & CT calibration (current build)
+- `region eu|us|auto` console command and the Web UI Region selector commit
+  mains_freq + region_code together through the validated NVS path (EU+60/US+50
+  contradictions are rejected). The python twin (`tools/webui/serve.py`) mirrors
+  the same API and persists to config.json.
+- CT front end is now formula-driven: `current_sense_set_front_end(K_mV_per_A,
+  VCC_mV, I_full_A, gain)` computes G=(3100−VCC/2)/(K·I_full); midrail is
+  measured at boot (motor off), RMS window spans integer mains half-cycles.
+  Verified on host: full-scale error ≤0.1 % for ACS712-30A/20A/05B profiles.
+- See SCHEMATIC.md for the legacy-board review (D1..D8 defects) and the v1
+  custom-board spec (MOC3052 random-phase optos, RC snubbers, RRIO amp,
+  DC-DC+low-noise LDO power tree, pin map contract).

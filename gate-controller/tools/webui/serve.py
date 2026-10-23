@@ -23,6 +23,8 @@ class Sim:
         self.batt_v, self.batt_pct, self.mains = 12.6, 95, True
         self.lim = [True, False]          # closed engaged at pos 0
         self.lim_fault, self.plant = False, True
+        self.ac_sel, self.ac_meas, self.zc = 0, 50, False  # AUTO, line freq
+        self.region = 1
         self.log = []
         self.ev("boot", "simulator ready")
     def ev(self, k, m):
@@ -64,6 +66,16 @@ class Sim:
                 if self.inj: self.i_rms = float(b["i"])
             if "mains" in b: self.mains = bool(b["mains"]); self.ev("power", f"mains {'on' if self.mains else 'LOST'}")
             if "plant" in b: self.plant = bool(b["plant"])
+            for key in ("region", "ac"):      # {"ac":0|50|60}, device-identical
+                if key in b:
+                    r = b[key]
+                    sel = 0 if r in ("auto", 0, "0") else int(r)
+                    assert sel in (0, 50, 60), "bad region value"
+                    self.ac_sel = sel
+                    self.region = {0: 0, 50: 1, 60: 2}[sel]
+                    self.ac_meas = 60 if sel == 60 else 50   # simulated line
+                    cfg_save({"mains_freq": sel, "region_code": self.region})
+                    self.ev("config", f"region := {sel or 'auto'} (line {self.ac_meas} Hz, persisted)")
     def status(self):
         with self.L:
             return dict(pos=self.pos, target=self.target, travel=self.travel,
@@ -71,9 +83,24 @@ class Sim:
                 i_rms=self.i_rms, inj=int(self.inj),
                 batt_v=self.batt_v, batt_pct=self.batt_pct, mains=self.mains,
                 lim_closed=self.lim[0], lim_open=self.lim[1], lim_fault=self.lim_fault,
-                relays=self.mdrv & 3, relays_ok=True, enc_status=0, log_dropped=0)
+                relays=self.mdrv & 3, relays_ok=True, enc_status=0, log_dropped=0,
+                ac_sel=self.ac_sel, ac_meas=self.ac_meas,
+                ac_half_us=(1000000 // self.ac_meas) if self.ac_meas else 0,
+                zc_sim=self.zc, region=self.region, i_fullscale_a=30.0)
+
+CFG_PATH = Path(__file__).resolve().parent / "config.json"
+def cfg_save(d):
+    try:
+        cur = json.loads(CFG_PATH.read_text()) if CFG_PATH.exists() else {}
+        cur.update(d); CFG_PATH.write_text(json.dumps(cur))
+    except Exception: pass
 
 SIM = Sim()
+try:
+    _c = json.loads(CFG_PATH.read_text()) if CFG_PATH.exists() else {}
+    SIM.ac_sel = int(_c.get("mains_freq", 0)); SIM.region = int(_c.get("region_code", 1))
+    SIM.ac_meas = 60 if SIM.ac_sel == 60 else 50
+except Exception: pass
 
 class H(BaseHTTPRequestHandler):
     def _send(self, code, ctype, body):

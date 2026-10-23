@@ -31,6 +31,7 @@
 #include "power_mgmt.h"
 #include "gate_logic.h"
 #include "events_log.h"
+#include "current_sense.h"
 
 static const char *TAG = "sim";
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -165,7 +166,7 @@ int sim_status_json(char *buf, int cap)
         "\"batt_v\":%.2f,\"batt_pct\":%u,\"mains\":%s,"
         "\"lim_closed\":%s,\"lim_open\":%s,\"lim_fault\":%s,"
         "\"relays\":%u,\"relays_ok\":%s,\"enc_status\":%d,"
-        "\"ac_sel\":%d,\"ac_meas\":%u,\"ac_half_us\":%u,\"zc_sim\":%s,"
+        "\"ac_sel\":%d,\"ac_meas\":%u,\"ac_half_us\":%u,\"zc_sim\":%s,\"region\":%u,\"i_fullscale_a\":%.1f,"
         "\"log_dropped\":%u}",
         s.position, s.target, (int)storage_cfg()->travel_counts,
         state_name(s.state), (int)motor_drv_state(), (int)motor_drv_direction(),
@@ -178,6 +179,8 @@ int sim_status_json(char *buf, int cap)
         (int)motor_drv_mains_freq(), (unsigned)motor_drv_measured_hz(),
         (unsigned)motor_drv_half_period_us(),
         sim_zc_running() ? "true" : "false",
+        (unsigned)storage_cfg()->region_code,
+        (double)current_sense_fullscale_a(),
         (unsigned)events_log_dropped());
 }
 
@@ -312,6 +315,29 @@ static int cmd_ac(int argc, char **argv)
     return 0;
 }
 
+/* Full regional profile commit: freq + informational region code together,
+ * validated by storage_cfg_commit (rejects EU+60 / US+50 contradictions). */
+static int cmd_region(int argc, char **argv)
+{
+    if (argc < 2) {
+        printf("region=%u mains_freq=%d (meas %uHz)\n",
+               (unsigned)storage_cfg()->region_code,
+               (int)motor_drv_mains_freq(), (unsigned)motor_drv_measured_hz());
+        printf("usage: region eu|us|auto\n"); return 0;
+    }
+    gate_config_t c = *storage_cfg();
+    if      (!strcmp(argv[1], "eu")) { c.mains_freq = MAINS_FREQ_50HZ; c.region_code = 1; }
+    else if (!strcmp(argv[1], "us")) { c.mains_freq = MAINS_FREQ_60HZ; c.region_code = 2; }
+    else if (!strcmp(argv[1], "auto")) { c.mains_freq = MAINS_FREQ_AUTO; c.region_code = 0; }
+    else { printf("bad value\n"); return 1; }
+    esp_err_t e = storage_cfg_commit(&c);
+    if (e != ESP_OK) { printf("commit failed (%s): contradictory region/freq?\n", esp_err_to_name(e)); return 1; }
+    motor_drv_set_mains_freq(c.mains_freq);   /* apply immediately          */
+    printf("region := %s (persisted; half=%uus)\n", argv[1],
+           (unsigned)motor_drv_half_period_us());
+    return 0;
+}
+
 static int cmd_cfg(int argc, char **argv)
 {
     /* Persist a regional pick into NVS config (survives reboot). */
@@ -369,6 +395,7 @@ static int cmd_help(int argc, char **argv)
 "  ac [auto|50|60]            regional mains freq (show/set)\n"
 "  ac zc 50|60|0              virtual zero-cross generator (bare-board test)\n"
 "  cfg mains_freq auto|50|60  persist regional pick to NVS\n"
+"  region eu|us|auto          full regional profile (freq+code, validated)\n"
 "  fault both-limits|stall|nocurrent   canned safety drills\n"
 "  reset                      reboot device\n"
 "Web UI: http://<device-ip>/ when Wi-Fi is up - mirrors all controls.\n");
@@ -419,6 +446,7 @@ esp_err_t sim_console_start(void)
         { .command = "plant",  .help = "plant model on/off",   .func = cmd_plant },
         { .command = "ac",     .help = "regional mains freq / ZC sim", .func = cmd_ac },
         { .command = "cfg",    .help = "persist config to NVS", .func = cmd_cfg },
+        { .command = "region", .help = "regional profile eu|us|auto", .func = cmd_region },
         { .command = "fault",  .help = "safety drills",        .func = cmd_fault },
         { .command = "reset",  .help = "reboot",               .func = cmd_reset },
         { .command = "help",   .help = "this text",            .func = cmd_help },

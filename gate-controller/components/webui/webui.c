@@ -17,6 +17,7 @@
 #include "gate_logic.h"
 #include "motor_drv.h"
 #include "events_log.h"
+#include "storage_nvs.h"
 
 static const char *TAG = "webui";
 static httpd_handle_t s_server;
@@ -121,8 +122,14 @@ static esp_err_t sim_handler(httpd_req_t *r)
        {"zc":50|60|-1} starts/stops the virtual zero-cross generator */
     double ac;
     if (json_num(body, "ac", &ac)) {
-        motor_drv_set_mains_freq(ac == 50 ? MAINS_FREQ_50HZ :
-                                 ac == 60 ? MAINS_FREQ_60HZ : MAINS_FREQ_AUTO);
+        /* full regional profile: freq + informational code committed together
+         * through the SAME validated path as the console `region` command */
+        gate_config_t c = *storage_cfg();
+        c.mains_freq = (ac == 50) ? MAINS_FREQ_50HZ :
+                       (ac == 60) ? MAINS_FREQ_60HZ : MAINS_FREQ_AUTO;
+        c.region_code = (ac == 50) ? 1 : (ac == 60) ? 2 : 0;
+        if (storage_cfg_commit(&c) == ESP_OK)
+            motor_drv_set_mains_freq(c.mains_freq);
     }
     if (json_num(body, "zc", &ac)) {
         if (ac < 0) sim_zc_stop(); else sim_zc_start((uint16_t)ac);

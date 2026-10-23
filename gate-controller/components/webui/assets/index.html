@@ -144,7 +144,7 @@ async function poll(){
   $('relays').innerHTML=s.relays_ok?'<span class="pill p-ok">ok '+s.relays+'</span>'
                                    :'<span class="pill p-err">ILLEGAL '+s.relays+'</span>';
   $('enc').textContent=s.enc_status==0?'OK':('ERR '+s.enc_status);
-  $('irms').textContent=s.i_rms.toFixed(2)+' A'+(s.inj?' ⚡':'');
+  $('irms').textContent=s.i_rms.toFixed(2)+' A'+(s.inj?' ⚡':'')+(s.i_fullscale_a?' / '+s.i_fullscale_a+'A FS':'');
   $('inj').textContent=s.inj?'on':'off';
   $('mains').innerHTML=s.mains?'<span class="pill p-ok">present</span>'
                               :'<span class="pill p-warn">LOST (battery)</span>';

@@ -97,6 +97,15 @@ void app_main(void)
     ESP_ERROR_CHECK(limit_sw_init());
     ESP_ERROR_CHECK(buttons_init());
     ESP_ERROR_CHECK(current_sense_init());  /* ADC1 + DMA, zero-cross reference */
+    /* CT front end per SCHEMATIC.md §2: ACS712-30A class on 3.3 V,
+     * G=(3100-1650)/(66*30)=0.73 -> full scale 30 A; thresholds in amps
+     * are independent of mains region and sensor variant. */
+    current_sense_set_front_end(66 /*K mV/A*/, 3300 /*VCC*/, 30 /*I_full*/, 0);
+    /* Relays/triac are in safe-state since hal_board_init(); measure the
+     * ratiometric midrail now, before any motion. Non-fatal on a bare
+     * board with no CT connected: thresholds simply stay at raw default. */
+    if (current_sense_calibrate_midrail() != ESP_OK)
+        ESP_LOGW(TAG, "CT midrail calibration skipped (sensor absent?)");
     ESP_ERROR_CHECK(power_mgmt_init());     /* mains detect, UPS budget, graceful save */
 
     ESP_ERROR_CHECK(gate_logic_init());     /* restores position, re-validates limits */
