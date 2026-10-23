@@ -19,3 +19,12 @@
 
 ### Handoff notes (append-only, newest first)
 - 2026-10-23 qwen-coder: audited codex changelog vs repo; found fixes uncommitted; committed missing items as 17ce09f (`build:` + Co-authored-by). Remote f202348..HEAD now contains all changelog items. Pending: final `idf.py build` verification by whoever has IDF toolchain.
+
+## Handoff notes (append-only)
+
+- 2026-10-23 qwen-coder: repo layout restructured per owner request — active
+  project is `gate-controller/` (build from inside it). STM32F103 legacy
+  sources moved to `legacy-stm32-f103/` (read-only reference, pure git mv,
+  no content changes). Root now holds only: AGENTS.md, ESP32_PORT_PLAN.md,
+  easyeda/, legacy-stm32-f103/, gate-controller/. Other agents: update any
+  scripts/docs that assume root-level build paths.
