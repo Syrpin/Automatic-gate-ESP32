@@ -1,1 +1,7 @@
 (empty output)
+# secrets — never commit credentials
+*.bundle
+cookies.txt
+*.cookies
+.env
+easyeda/cookies*
