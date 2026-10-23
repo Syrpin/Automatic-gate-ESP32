@@ -163,7 +163,7 @@ int sim_status_json(char *buf, int cap)
         "{\"pos\":%d,\"target\":%d,\"travel\":%d,"
         "\"state\":\"%s\",\"mdrv\":%d,\"dir\":%d,"
         "\"i_rms\":%.2f,\"inj\":%d,"
-        "\"batt_v\":%.2f,\"batt_pct\":%u,\"mains\":%s,"
+        "\"batt_v\":%.2f,\"batt_ok\":%s,\"mains\":%s,"
         "\"lim_closed\":%s,\"lim_open\":%s,\"lim_fault\":%s,"
         "\"relays\":%u,\"relays_ok\":%s,\"enc_status\":%d,"
         "\"ac_sel\":%d,\"ac_meas\":%u,\"ac_half_us\":%u,\"zc_sim\":%s,\"region\":%u,\"i_fullscale_a\":%.1f,"
@@ -172,7 +172,7 @@ int sim_status_json(char *buf, int cap)
         s.position, s.target, (int)storage_cfg()->travel_counts,
         state_name(s.state), (int)motor_drv_state(), (int)motor_drv_direction(),
         s.current_rma, (int)sim_current_override_active(),
-        s.batt_v, (unsigned)power_battery_pct(), s.mains_ok ? "true" : "false",
+        s.batt_v, (s.batt_v >= 24.0f) ? "true" : "false", s.mains_ok ? "true" : "false",
         L->at_closed ? "true" : "false", L->at_open ? "true" : "false",
         L->wire_fault ? "true" : "false",
         (unsigned)relays, rel_ok ? "true" : "false",

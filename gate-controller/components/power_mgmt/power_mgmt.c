@@ -18,6 +18,9 @@ static const char *TAG="pwr";
 #define MAINS_LOST_DEBOUNCE_MS 15
 
 #define BATT_DIVIDER 2.0f
+/* Hold-up health threshold: a 24V-class pack (or supercap stack) is considered
+   serviceable above this voltage; below it the loss-of-mains budget is at risk. */
+#define HOLDUP_MIN_V 24.0f
 static adc_oneshot_unit_handle_t uh;
 static volatile bool mains_ok=true, mains_pending_down;
 static uint32_t mains_change_ms;
@@ -37,8 +40,11 @@ esp_err_t power_mgmt_init(void){
     adc_oneshot_unit_init_cfg_t uc={.unit_id=ADC_UNIT_1};
     ESP_RETURN_ON_ERROR(adc_oneshot_new_unit(&uc,&uh),TAG,"adc");
     adc_oneshot_chan_cfg_t cc={.atten=ADC_ATTEN_DB_12,.bitwidth=ADC_BITWIDTH_DEFAULT};
+    /* Battery telemetry was descoped (decision 2026): the hold-up source is a
+       health-check only, so we configure just the pack/divider channel and do
+       NOT sample an NTC battery-temperature channel. The thermal interlock
+       remains a hardware charge-gate; power_charge_inhibited() stays a stub. */
     ESP_RETURN_ON_ERROR(adc_oneshot_config_channel(uh,CH_BATTERY,cc),TAG,"batt");
-    ESP_RETURN_ON_ERROR(adc_oneshot_config_channel(uh,CH_TEMP_BATT,cc),TAG,"ntc");
     return ESP_OK;
 }
 
@@ -49,13 +55,12 @@ static void sample(void){
 
 bool power_mains_ok(void){ return mains_ok; }
 float power_batt_volts(void){ return batt_v; }
-bool power_charge_inhibited(void){ /* NTC window check placeholder: T<0C or >45C */ return false; }
-uint8_t power_battery_pct(void){
-    /* LiFePO4-ish OCV; replace with fuel gauge when chosen (p.11 question closed as non-critical) */
-    if(batt_v<=0) return 0;
-    int pct=(int)((batt_v-26.4f)/(29.2f-26.4f)*100);
-    return pct<0?0:pct>100?100:(uint8_t)pct;
-}
+bool power_charge_inhibited(void){ /* hardware charge-gate is authoritative; soft flag stub */ return false; }
+
+/* Battery state-of-charge telemetry was descoped (decision 2026): the hold-up
+   source only needs to be healthy enough to cover loss-of-mains save + one
+   Telegram transaction. We expose a voltage sanity check instead of SoC%. */
+bool power_holdup_ok(void){ return batt_v >= HOLDUP_MIN_V; }
 
 void power_urgent_save_and_notify(void){
     /* steps 2-3 of the UPS budget (p.9.1): position first, then journal */

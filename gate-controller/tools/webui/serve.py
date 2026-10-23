@@ -20,7 +20,8 @@ class Sim:
         self.pos, self.target, self.travel = 0, 0, 4000
         self.state, self.mdrv, self.dir = "IDLE_CLOSED", 0, 0
         self.i_rms, self.inj = 0.0, False
-        self.batt_v, self.batt_pct, self.mains = 12.6, 95, True
+        self.batt_v, self.mains = 26.4, True   # hold-up pack voltage (24V-class)
+        self.batt_ok = self.batt_v >= 24.0     # health check only; SoC descoped
         self.lim = [True, False]          # closed engaged at pos 0
         self.lim_fault, self.plant = False, True
         self.ac_sel, self.ac_meas, self.zc = 0, 50, False  # AUTO, line freq
@@ -92,7 +93,7 @@ class Sim:
             return dict(pos=self.pos, target=self.target, travel=self.travel,
                 state=self.state, mdrv=self.mdrv, dir=self.dir,
                 i_rms=self.i_rms, inj=int(self.inj),
-                batt_v=self.batt_v, batt_pct=self.batt_pct, mains=self.mains,
+                batt_v=self.batt_v, batt_ok=self.batt_ok, mains=self.mains,
                 lim_closed=self.lim[0], lim_open=self.lim[1], lim_fault=self.lim_fault,
                 relays=self.mdrv & 3, relays_ok=True, enc_status=0, log_dropped=0,
                 ac_sel=self.ac_sel, ac_meas=self.ac_meas,

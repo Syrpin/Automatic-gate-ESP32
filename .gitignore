@@ -1,4 +1,10 @@
-(empty output)
+# build artifacts
+*.pyc
+__pycache__/
+build/
+managed_components/
+dependencies.lock
+
 # secrets — never commit credentials
 *.bundle
 cookies.txt

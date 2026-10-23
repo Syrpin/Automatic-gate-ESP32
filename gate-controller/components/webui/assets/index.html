@@ -75,7 +75,7 @@ padding:10px;height:220px;overflow:auto;font-size:11px;white-space:pre-wrap;marg
       <b>I rms (CT)</b><span id="irms">—</span>
       <b>injection</b><span id="inj">off</span>
       <b>mains 230V</b><span id="mains">—</span>
-      <b>battery</b><span id="batt">—</span>
+      <b>hold-up</b><span id="batt">—</span>
       <b>mains freq</b><span id="acf">—</span>
     </div>
     <div class="row" style="margin-top:10px">
@@ -153,8 +153,9 @@ async function poll(){
   $('irms').textContent=s.i_rms.toFixed(2)+' A'+(s.inj?' ⚡':'')+(s.i_fullscale_a?' / '+s.i_fullscale_a+'A FS':'');
   $('inj').textContent=s.inj?'on':'off';
   $('mains').innerHTML=s.mains?'<span class="pill p-ok">present</span>'
-                              :'<span class="pill p-warn">LOST (battery)</span>';
-  $('batt').textContent=s.batt_v.toFixed(2)+' V · '+s.batt_pct+'%';
+                              :'<span class="pill p-warn">LOST (hold-up)</span>';
+  // hold-up source health: voltage only — no SoC telemetry (decision 2026)
+  $('batt').textContent=s.batt_v.toFixed(2)+' V'+(s.batt_ok===false?' ⚠':'');
   const acn={0:'AUTO',50:'50 Hz',60:'60 Hz'};
   $('acf').textContent=(acn[s.ac_sel]||s.ac_sel)+(s.ac_meas?' · meas '+s.ac_meas+'Hz':'')+(s.ac_half_us?' · half '+s.ac_half_us+'µs':'');
   if(document.activeElement!==$('acsel')) $('acsel').value=String(s.ac_sel);
