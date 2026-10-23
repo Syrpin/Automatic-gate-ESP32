@@ -1,0 +1,16 @@
+menu "Gate Web UI"
+
+config WEBUI_ENABLE
+    bool "Serve embedded web dashboard over Wi-Fi (softAP fallback)"
+    depends on GATE_SIM
+    default y
+
+config WEBUI_WIFI_SSID
+    string "Station SSID (leave empty to start open softAP 'gate-cfg')"
+    default ""
+
+config WEBUI_WIFI_PASSWORD
+    string "Station password"
+    default ""
+
+endmenu

@@ -29,6 +29,16 @@ void      motor_drv_stop(bool soft);          /* decel then safe-state        */
 mdrv_state_t motor_drv_state(void);
 gate_dir_t   motor_drv_direction(void);
 
+/* Regional mains frequency (50/60 Hz) for the phase-angle firing loop.
+ * Set from gate_config.mains_freq at init; sim/web can change live.
+ * Returns the effective half-period in us (20000/16667/10000/8333). */
+void     motor_drv_set_mains_freq(mains_freq_sel_t sel);
+mains_freq_sel_t motor_drv_mains_freq(void);   /* current selection         */
+uint16_t motor_drv_measured_hz(void);          /* last ZC-measured freq, or 0 */
+uint32_t motor_drv_half_period_us(void);       /* effective half-period us:
+                                                  50Hz=10000, 60Hz=8333; in AUTO
+                                                  tracks the measured line period */
+
 /* Called by gate_logic each ctrl tick to advance ramps / watchdogs. */
 void motor_drv_update(const TickPeriod_t *tp);
 

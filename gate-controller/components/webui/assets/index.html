@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gate Controller — Simulator Dashboard</title>
+<style>
+:root{--bg:#0f1419;--panel:#1a2129;--line:#2b3745;--txt:#d7e2ec;--dim:#7d93a8;
+--ok:#3fb96b;--warn:#e0a63f;--err:#e05f5f;--acc:#3f8fe0}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);
+font:14px/1.45 system-ui,"Segoe UI",Roboto,sans-serif}
+header{display:flex;align-items:center;gap:12px;padding:14px 20px;
+border-bottom:1px solid var(--line)}
+header h1{font-size:16px;margin:0;font-weight:600}
+#conn{margin-left:auto;font-size:12px;color:var(--dim)}
+main{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+gap:14px;padding:16px 20px;max-width:1200px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+padding:14px}
+.card h2{margin:0 0 10px;font-size:12px;text-transform:uppercase;
+letter-spacing:.08em;color:var(--dim)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+button{background:#243040;border:1px solid var(--line);color:var(--txt);
+border-radius:7px;padding:8px 14px;font-size:14px;cursor:pointer}
+button:hover{border-color:var(--acc)}
+button.open{background:#1c3a26;border-color:var(--ok)}
+button.close{background:#3a241c;border-color:var(--warn)}
+button.stop{background:#3a1c1c;border-color:var(--err)}
+.bar{height:22px;background:#0b0f13;border:1px solid var(--line);
+border-radius:5px;position:relative;overflow:hidden;margin:8px 0}
+.bar>i{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,#2b6cb0,#3f8fe0);
+transition:width .25s}
+.bar>u{position:absolute;right:6px;top:2px;font-style:normal;font-size:12px;color:#fff}
+.kv{display:grid;grid-template-columns:1fr auto;gap:2px 10px;font-size:13px}
+.kv b{font-weight:500;color:var(--dim)}
+.pill{padding:1px 8px;border-radius:99px;font-size:12px;border:1px solid}
+.p-ok{color:var(--ok);border-color:var(--ok)}
+.p-warn{color:var(--warn);border-color:var(--warn)}
+.p-err{color:var(--err);border-color:var(--err)}
+input[type=number]{width:80px;background:#0b0f13;border:1px solid var(--line);
+color:var(--txt);border-radius:6px;padding:6px}
+label.chk{display:flex;gap:6px;align-items:center;color:var(--dim)}
+pre#log{background:#0b0f13;border:1px solid var(--line);border-radius:8px;
+padding:10px;height:220px;overflow:auto;font-size:11px;white-space:pre-wrap;margin:0}
+.state{font-size:15px;font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>⛩ Gate Controller — BMS-style dashboard (sim)</h1>
+  <span id="conn">connecting…</span>
+</header>
+<main>
+  <div class="card">
+    <h2>Position</h2>
+    <div class="bar"><i id="posfill" style="width:0%"></i><u id="postxt">—</u></div>
+    <div class="kv">
+      <b>state</b><span id="state" class="state">—</span>
+      <b>target</b><span id="target">—</span>
+      <b>motor_drv</b><span id="mdrv">—</span>
+      <b>relays ok</b><span id="relays">—</span>
+      <b>encoder</b><span id="enc">—</span>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="open" onclick="cmd('open')">▲ Open</button>
+      <button class="stop" onclick="cmd('stop')">■ Stop</button>
+      <button class="close" onclick="cmd('close')">▼ Close</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Power / Current</h2>
+    <div class="kv">
+      <b>I rms (CT)</b><span id="irms">—</span>
+      <b>injection</b><span id="inj">off</span>
+      <b>mains 230V</b><span id="mains">—</span>
+      <b>battery</b><span id="batt">—</span>
+      <b>mains freq</b><span id="acf">—</span>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <input type="number" id="amps" step="0.5" value="8" placeholder="A">
+      <button onclick="inject()">Inject I</button>
+      <button onclick="injectOff()">off</button>
+      <button onclick="mains(false)">mains OFF</button>
+      <button onclick="mains(true)">mains ON</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <b style="align-self:center">Region:</b>
+      <select id="acsel" onchange="acset(this.value)" style="background:var(--panel);color:var(--txt);border:1px solid var(--line);padding:4px 8px;border-radius:6px">
+        <option value="0">AUTO-detect</option>
+        <option value="50">50 Hz (RU/EU)</option>
+        <option value="60">60 Hz (US/JP)</option>
+      </select>
+      <label class="chk"><input type="checkbox" id="zc" onchange="zcsim(this.checked?50:0)">virtual ZC</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Virtual peripherals</h2>
+    <div class="row">
+      <button onclick="btn('open')">BTN OPEN</button>
+      <button onclick="btn('stop')">BTN STOP</button>
+      <button onclick="btn('close')">BTN CLOSE</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label class="chk"><input type="checkbox" id="lc" onchange="limit('closed',this.checked)">limit CLOSED</label>
+      <label class="chk"><input type="checkbox" id="lo" onchange="limit('open',this.checked)">limit OPEN</label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label class="chk"><input type="checkbox" id="pl" checked onchange="plant(this.checked)">plant model</label>
+      <span id="limfault"></span>
+    </div>
+  </div>
+
+  <div class="card" style="grid-column:1/-1">
+    <h2>Event journal (/api/log)</h2>
+    <pre id="log">loading…</pre>
+  </div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+async function post(u,b){const r=await fetch(u,{method:'POST',body:JSON.stringify(b)});return r.json()}
+function cmd(c){post('/api/cmd',{cmd:c})}
+function btn(b){post('/api/sim',{btn:b,ms:150})}
+function limit(l,on){post('/api/sim',{limit:l,engaged:on?1:0})}
+function inject(){post('/api/sim',{i:+$('amps').value||8})}
+function injectOff(){post('/api/sim',{i:-1})}
+function mains(on){post('/api/sim',{mains:on})}
+function plant(on){post('/api/sim',{plant:on})}
+function acset(v){post('/api/sim',{ac:+v})}
+function zcsim(hz){post('/api/sim',{zc:hz<0?-1:hz})}
+const MD=['IDLE','PREPARE','RAMPING','RUNNING','DECEL','BRAKE','FAULT'];
+async function poll(){
+ try{
+  const s=await(await fetch('/api/status')).json();
+  $('conn').textContent='connected · '+location.host;
+  const pct=s.travel?Math.max(0,Math.min(100,s.pos/s.travel*100)):0;
+  $('posfill').style.width=pct+'%';
+  $('postxt').textContent=s.pos+' / '+s.travel+' ('+pct.toFixed(0)+'%)';
+  $('state').textContent=s.state;
+  $('target').textContent=s.target;
+  $('mdrv').textContent=(MD[s.mdrv]||s.mdrv)+(s.dir?' dir'+s.dir:'');
+  $('relays').innerHTML=s.relays_ok?'<span class="pill p-ok">ok '+s.relays+'</span>'
+                                   :'<span class="pill p-err">ILLEGAL '+s.relays+'</span>';
+  $('enc').textContent=s.enc_status==0?'OK':('ERR '+s.enc_status);
+  $('irms').textContent=s.i_rms.toFixed(2)+' A'+(s.inj?' ⚡':'');
+  $('inj').textContent=s.inj?'on':'off';
+  $('mains').innerHTML=s.mains?'<span class="pill p-ok">present</span>'
+                              :'<span class="pill p-warn">LOST (battery)</span>';
+  $('batt').textContent=s.batt_v.toFixed(2)+' V · '+s.batt_pct+'%';
+  const acn={0:'AUTO',50:'50 Hz',60:'60 Hz'};
+  $('acf').textContent=(acn[s.ac_sel]||s.ac_sel)+(s.ac_meas?' · meas '+s.ac_meas+'Hz':'')+(s.ac_half_us?' · half '+s.ac_half_us+'µs':'');
+  if(document.activeElement!==$('acsel')) $('acsel').value=String(s.ac_sel);
+  $('zc').checked=!!s.zc_sim;
+  $('limfault').innerHTML=s.lim_fault?'<span class="pill p-err">LIMIT WIRE FAULT</span>':'';
+  $('lc').checked=s.lim_closed; $('lo').checked=s.lim_open;
+  const l=await(await fetch('/api/log')).json();
+  $('log').textContent=l.map(e=>e.t+' ['+e.k+'] '+(e.m||JSON.stringify(e))).reverse().join('\n');
+ }catch(e){$('conn').textContent='disconnected — retrying…'}
+}
+setInterval(poll,500); poll();
+</script>
+</body>
+</html>

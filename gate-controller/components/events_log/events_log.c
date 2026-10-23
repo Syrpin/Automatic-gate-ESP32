@@ -43,3 +43,22 @@ void events_log_flush(void){
     nvs_commit(h); nvs_close(h);
 }
 uint32_t events_log_dropped(void){return dropped;}
+
+/* stream the most recent ring entries as a JSON array (web UI log panel).
+   Ring holds newest at head-1; lines are already JSON objects w/ t/k/m. */
+int events_log_tail(char *buf, int cap)
+{
+    int n = 0;
+    if (cap < 4) { buf[0] = 0; return 0; }
+    n += snprintf(buf + n, cap - n, "[");
+    uint8_t cnt = (head >= tail) ? (uint8_t)(head - tail) : (uint8_t)(RING_N - tail + head);
+    /* read-only walk from oldest to newest without moving tail */
+    for (uint8_t i = 0; i < cnt && n < cap - LINE_MAX - 2; i++) {
+        uint8_t idx = (uint8_t)((tail + i) % RING_N);
+        size_t ll = strlen(ring[idx].line);
+        if (ll > 1 && ring[idx].line[ll-1] == '\n') ring[idx].line[ll-1] = 0; /* trim */
+        n += snprintf(buf + n, cap - n, "%s%s", i ? "," : "", ring[idx].line);
+    }
+    n += snprintf(buf + n, cap - n, "]");
+    return n;
+}

@@ -1,0 +1,12 @@
+menu "Gate simulator (HIL)"
+
+config GATE_SIM
+    bool "Enable hardware-in-the-loop simulator"
+    default n
+    help
+        Runs gate_logic/motor_drv/etc against virtual peripherals:
+        USB-UART REPL (status/btn/limit/enc/i/mains/fault) plus the
+        Wi-Fi web dashboard. Intended for the bare devkit board with
+        nothing wired. NEVER enable in a build that drives real mains.
+
+endmenu

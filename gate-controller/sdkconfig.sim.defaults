@@ -1,0 +1,7 @@
+# Extra defaults layered for bench/simulator builds:
+#   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.sim.defaults" build
+CONFIG_GATE_SIM=y
+CONFIG_WEBUI_ENABLE=y
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_FREERTOS_HZ=1000
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30

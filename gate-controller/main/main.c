@@ -27,6 +27,12 @@
 #include "gate_logic.h"
 #include "power_mgmt.h"
 #include "events_log.h"
+#ifdef CONFIG_GATE_SIM
+#include "sim.h"
+#endif
+#ifdef CONFIG_WEBUI_ENABLE
+#include "webui.h"
+#endif
 
 static const char *TAG = "main";
 
@@ -96,6 +102,14 @@ void app_main(void)
     ESP_ERROR_CHECK(gate_logic_init());     /* restores position, re-validates limits */
 
     /* Phase C stub: camera_pipeline_init()/vision_core wired in next stage. */
+
+#ifdef CONFIG_GATE_SIM
+    /* bare-board HIL: virtual peripherals + plant model + REPL on USB-UART */
+    ESP_ERROR_CHECK(sim_start());
+#endif
+#ifdef CONFIG_WEBUI_ENABLE
+    ESP_ERROR_CHECK(webui_start());         /* Wi-Fi + dashboard (sim builds only) */
+#endif
 
     xTaskCreatePinnedToCore(ctrl_task, "ctrl", 4096, NULL, 6, NULL, 0);
     xTaskCreate(beep_task, "beep", 2048, NULL, 4, NULL);

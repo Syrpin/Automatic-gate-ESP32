@@ -20,15 +20,32 @@ static gate_config_t s_cfg = {
     .i_rms_peak_max    = 14.0f,
     .inrush_window_ms  = 700,
     .enc_type          = ENC_TYPE_OPTICAL,
+#if defined(CONFIG_GATE_MAINS_50HZ)
+    .mains_freq        = MAINS_FREQ_50HZ, .region_code = 1,
+#elif defined(CONFIG_GATE_MAINS_60HZ)
+    .mains_freq        = MAINS_FREQ_60HZ, .region_code = 2,
+#else
+    .mains_freq        = MAINS_FREQ_AUTO, /* Kconfig default: AUTO-detect   */
+#endif
     .pinch_detect_en   = true,
     .ir_illum_policy_off = true,
 };
 
 static bool validate(const gate_config_t *c)
 {
-    return c->travel_counts >= 100 && c->enc_min >= 1 &&
-           c->ramp_up_ms >= 200 && c->duty_max_pct <= 100 &&
-           c->i_rms_run_max > 0.1f && c->i_rms_peak_max > c->i_rms_run_max;
+    if (!(c->travel_counts >= 100 && c->enc_min >= 1 &&
+          c->ramp_up_ms >= 200 && c->duty_max_pct <= 100 &&
+          c->i_rms_run_max > 0.1f && c->i_rms_peak_max > c->i_rms_run_max))
+        return false;
+    /* regional sanity: explicit selection must be 50 or 60 (or AUTO);
+       region_code is informational but must not contradict an explicit pick */
+    if (c->mains_freq != MAINS_FREQ_AUTO &&
+        c->mains_freq != MAINS_FREQ_50HZ &&
+        c->mains_freq != MAINS_FREQ_60HZ)
+        return false;
+    if (c->region_code == 1 && c->mains_freq == MAINS_FREQ_60HZ) return false; /* EU w/ 60Hz */
+    if (c->region_code == 2 && c->mains_freq == MAINS_FREQ_50HZ) return false; /* US w/ 50Hz */
+    return true;
 }
 
 esp_err_t storage_nvs_init(void)

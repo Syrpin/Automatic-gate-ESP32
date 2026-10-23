@@ -3,6 +3,9 @@
 #include "esp_log.h"
 #include "hal_board.h"
 #include "buttons.h"
+#ifdef CONFIG_GATE_SIM
+#include "sim_hooks.h"
+#endif
 
 static const char *TAG="btn";
 #define LONGPRESS_MS 800
@@ -26,7 +29,12 @@ static btn_event_t classify(uint8_t idx,bool pressed,uint32_t held_ms){
 
 void buttons_sample(const TickPeriod_t *tp){
     for(uint8_t i=0;i<3;i++){
-        int lvl=gpio_get_level(B[i].pin); bool raw=!lvl; /* active-low, pull-up */
+        #ifdef CONFIG_GATE_SIM
+        int lvl = sim_button_active() ? sim_button_level(i) : gpio_get_level(B[i].pin);
+#else
+        int lvl = gpio_get_level(B[i].pin);
+#endif
+        bool raw=!lvl; /* active-low, pull-up */
         B[i].hist=(B[i].hist<<1)|(raw&1);
         bool stbl = (B[i].hist&7)==7 ? true : (B[i].hist&7)==0 ? false : B[i].stable;
         if(stbl!=B[i].last){

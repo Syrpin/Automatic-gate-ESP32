@@ -15,6 +15,15 @@ typedef enum {
     ENC_TYPE_DI            = 2,   /* Inductive: pulse train, dir from limits */
 } encoder_type_t;
 
+/* Regional mains frequency for the triac phase-angle firing loop.
+ * RU/EU/CIS default 50 Hz; US/JP/SA 60 Hz. AUTO = measure zero-cross period
+ * at startup and latch the detected value (replaces old AC_PERIOD magic). */
+typedef enum {
+    MAINS_FREQ_AUTO = 0,
+    MAINS_FREQ_50HZ = 50,
+    MAINS_FREQ_60HZ = 60,
+} mains_freq_sel_t;
+
 typedef struct {
     /* mechanical calibration */
     int32_t  travel_counts;      /* closed->open in encoder counts          */
@@ -28,6 +37,10 @@ typedef struct {
     uint16_t inrush_window_ms;
     /* environment / profiles */
     encoder_type_t enc_type;
+    mains_freq_sel_t mains_freq; /* regional 50/60 Hz (or AUTO detect)      */
+    uint8_t  region_code;        /* informational only: 0=other 1=RU/EU-50
+                                    2=US/JP-60 — drives defaults/UI hints,
+                                    never changes control behavior directly */
     bool     pinch_detect_en;
     bool     ir_illum_policy_off;/* keep IR disabled until night decision   */
 } gate_config_t;

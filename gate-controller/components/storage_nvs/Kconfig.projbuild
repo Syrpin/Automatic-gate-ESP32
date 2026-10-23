@@ -1,0 +1,19 @@
+menu "Gate regional settings"
+
+choice GATE_MAINS_FREQ_DEFAULT
+    bool "Default mains frequency (regional)"
+    default GATE_MAINS_AUTO
+    help
+        Selects the initial value of gate_config.mains_freq on first boot.
+        Can always be changed at runtime via NVS / web UI / console ("cfg").
+        AUTO measures the zero-cross period and latches 50 or 60 Hz.
+
+    config GATE_MAINS_AUTO
+        bool "Auto-detect from zero-cross (safe for any region)"
+    config GATE_MAINS_50HZ
+        bool "50 Hz (RU/EU/CIS, most of Asia, AU/NZ)"
+    config GATE_MAINS_60HZ
+        bool "60 Hz (US/CA/MX, JP-west, SA, KR/TW)"
+endchoice
+
+endmenu

@@ -30,11 +30,47 @@ static struct {
     uint8_t      throttle;       /* commanded %                            */
     uint8_t      applied;        /* post-ramp %                            */
     int64_t      zc_last_us;     /* last zero-cross timestamp              */
-    uint16_t     half_ms;        /* measured mains half-period             */
+    uint32_t     half_us;        /* effective mains half-period, microsec. */
+    mains_freq_sel_t freq_sel;   /* regional: AUTO / 50 / 60               */
+    uint16_t     meas_hz;        /* ZC-measured line frequency (AUTO latch)*/
+    uint8_t      meas_ok_cnt;    /* consecutive in-band ZC measurements    */
     int64_t      fired_us;       /* when triac pulse was scheduled         */
     int64_t      energized_ms;   /* uptime since set() for watchdog        */
     bool         relay_seq_ok;
 } s;
+
+/* Exact half-period in us for an explicit selection (no ms truncation:
+ * 60 Hz => 8333 us, not 8000 — firing-angle error would be ~4%). */
+static uint32_t half_us_for(mains_freq_sel_t sel)
+{
+    switch (sel) {
+    case MAINS_FREQ_50HZ: return 10000;
+    case MAINS_FREQ_60HZ: return 8333;
+    default:              return 0;   /* AUTO: caller decides              */
+    }
+}
+
+uint32_t motor_drv_half_period_us(void) { return s.half_us; }
+
+void motor_drv_set_mains_freq(mains_freq_sel_t sel)
+{
+    s.freq_sel = sel;
+    s.meas_ok_cnt = 0;                /* re-detect on any selection change */
+    if (sel == MAINS_FREQ_AUTO) {
+        s.meas_hz = 0;
+        /* provisional safe fallback = nominal 50 Hz until ZC locks (ISR) */
+        s.half_us = half_us_for(MAINS_FREQ_50HZ);
+    } else {
+        s.half_us = half_us_for(sel);
+        s.meas_hz = (uint16_t)sel;    /* explicit pick is authoritative    */
+    }
+    ESP_LOGI(TAG, "mains freq := %s (half=%uus)",
+             sel == MAINS_FREQ_50HZ ? "50Hz" :
+             sel == MAINS_FREQ_60HZ ? "60Hz" : "AUTO",
+             (unsigned)s.half_us);
+}
+mains_freq_sel_t motor_drv_mains_freq(void) { return s.freq_sel; }
+uint16_t motor_drv_measured_hz(void) { return s.meas_hz; }
 
 static void relays_apply(gate_dir_t d)
 {
@@ -55,7 +91,8 @@ static void safe_off(void)
 esp_err_t motor_drv_init(void)
 {
     memset(&s, 0, sizeof s);
-    s.half_ms = 10; /* 50 Hz default; auto-measured after first ZC edges */
+    /* Regional selection from NVS config (Kconfig default on first boot). */
+    motor_drv_set_mains_freq(storage_cfg()->mains_freq);
     hal_board_safe_state();
     /* Zero-cross interrupt on PIN_MAINS_DETECT: */
     gpio_set_intr_type(PIN_MAINS_DETECT, GPIO_INTR_NEGEDGE);
@@ -70,14 +107,49 @@ esp_err_t motor_drv_init(void)
 IRAM_ATTR void motor_drv_zero_cross_us(int64_t now_us)
 {
     if (s.zc_last_us) {
-        uint16_t hm = (uint16_t)((now_us - s.zc_last_us) / 1000);
-        if (hm > 6 && hm < 12) s.half_ms = hm;   /* lock onto 42..83 Hz */
+        int32_t hu = (int32_t)(now_us - s.zc_last_us);   /* half-period, us */
+        /* Plausible band 41.7..83.3 Hz => half-period 6000..12000 us. */
+        if (hu >= 6000 && hu <= 12000) {
+            if (s.freq_sel == MAINS_FREQ_AUTO) {
+                /* Auto-detect: median-of-8 consecutive in-band samples,
+                   latched after 8 valid periods (~160 ms @50Hz). Tracking
+                   the provisional mean keeps firing sane while detecting. */
+                static int32_t buf[8];
+                static uint8_t idx, cnt;
+                buf[idx] = hu; idx = (idx + 1) & 7; if (cnt < 8) cnt++;
+                int32_t sorted[8]; memcpy(sorted, buf, sizeof buf);
+                for (uint8_t a = 1; a < cnt; a++)          /* insertion sort */
+                    for (int32_t v = sorted[a]; a && sorted[a-1] > v; a--)
+                        sorted[a] = sorted[a-1];
+                int32_t med = sorted[cnt / 2];
+                if (++s.meas_ok_cnt >= 8) {
+                    s.meas_hz = (med > 9166) ? 50 : 60;
+                    s.half_us = (uint32_t)med;   /* track actual line period */
+                    idx = cnt = 0;
+                } else {
+                    s.half_us = (uint32_t)med;   /* provisional tracking     */
+                }
+            } else {
+                /* Explicit regional pick: never re-decide the region, but
+                   track the real measured period for firing precision.
+                   Sanity: reject a measurement that contradicts the pick
+                   by >5% (tripped breaker / wrong setting) -> keep nominal. */
+                uint32_t nominal = half_us_for(s.freq_sel);
+                int32_t  lo = (int32_t)(nominal * 95 / 100);
+                int32_t  hi = (int32_t)(nominal * 105 / 100);
+                if (hu >= lo && hu <= hi) s.half_us = (uint32_t)hu;
+                s.meas_hz = (uint16_t)s.freq_sel;
+            }
+        } else {
+            s.meas_ok_cnt = 0;            /* glitch -> restart detection */
+        }
     }
     s.zc_last_us = now_us;
     /* Schedule firing for this half-cycle if running: */
     if (s.state != MDRV_IDLE && s.state != MDRV_FAULT && s.applied > 0) {
-        uint32_t deg = (100 - s.applied) * 180u / 100u;      /* conduction % */
-        int64_t delay_us = (int64_t)s.half_ms * 1000 * deg / 180;
+        /* throttle% -> conduction angle: 0% => fire at end (no power),
+           100% => fire at ZC (full). delay = half*(100-p)/100, exact us. */
+        int64_t delay_us = (int64_t)s.half_us * (100 - s.applied) / 100;
         s.fired_us = now_us + delay_us;
         /* one-shot timer arm omitted in skeleton (Phase B): fires TRIAC 200us */
     }

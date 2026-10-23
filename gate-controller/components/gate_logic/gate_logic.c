@@ -30,6 +30,7 @@ static struct {
 static mdrv_state_t ms(void){ return motor_drv_state(); }
 static void encoder_restore_stub_set(int32_t p);
 static void hal_board_safe_state_now(void);
+static void gpio_beeper_off_stub(void);
 
 static void to(gate_state_t n,const char*why){
     if(G.st==n)return;

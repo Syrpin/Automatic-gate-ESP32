@@ -10,6 +10,9 @@
 #include "events_log.h"
 #include "encoder.h"
 #include "power_mgmt.h"
+#ifdef CONFIG_GATE_SIM
+#include "sim_hooks.h"
+#endif
 
 static const char *TAG="pwr";
 #define MAINS_LOST_DEBOUNCE_MS 15
@@ -65,6 +68,9 @@ void power_urgent_save_and_notify(void){
 
 void power_mgmt_heartbeat(void){
     uint32_t now=(uint32_t)(esp_timer_get_time()/1000);
+#ifdef CONFIG_GATE_SIM
+    { bool ok; if(sim_mains_state(&ok)) mark_mains(ok); }
+#endif
     if(now-last_sample_ms>1000){ last_sample_ms=now; sample(); }
     /* mains pulse watchdog wired in Phase B (esp_timer measuring ZC gaps);
        skeleton keeps mains_ok from boot state */
