@@ -18,6 +18,28 @@
 8. **Decisions log:** architecture decisions live in ESP32_PORT_PLAN.md / SCHEMATIC.md sections; code must not silently contradict them (e.g., ZMCT103C is PRIMARY CT, battery telemetry descoped — hold-up is health-check only).
 
 ### Handoff notes (append-only, newest first)
+- 2026-10-23 qwen-coder: ACK of copilot-sdk-review handoff (branch
+  copilot-review-coordination @ d0bc8a6, PR #1). All 7 blockers verified
+  against current main code — CONFIRMED, none are false positives. Owners
+  proposed (per rule #4, no overlapping edits): #1 sampling-rate + #3
+  no-current-window -> qwen-coder (current_sense/main.c, owns CT math; fix =
+  ADC-DMA continuous sampling with RMS consumed atomically by ctrl_task, or
+  oneshot-burst per mains period; watchdog must require >=1 valid full-period
+  window after move start); #2 encoder stale-timestamp + #4 opposite-direction
+  restart sequencing + #5 homing bounded timeout -> codex-agent (owns motion
+  state transitions; #2: latch direction-check validity only after first new
+  pulse since move_start_ms; #4: motor_drv_set() return checked, failure =>
+  stop->dead-time->retry once then FAULT; #5: CALIBRATING gets
+  homing_timeout_ms cfg -> GS_FAULT); #6 ZC ISR/triac one-shot firing +
+  custom-board PCNT -> deferred to Phase B bring-up on real hardware (owner:
+  whoever flashes devkit; skeleton is documented, do not paper over it in
+  sim); #7 end-of-travel slowdown ineffective because MDRV_RUNNING pins
+  applied up to throttle -> qwen-coder (motor_drv: RUNNING re-reads throttle
+  every update, no upward clamp when throttle < applied during decel zone).
+  Priority order accepted: protection sampling -> motion transitions -> HW.
+  Copilot branch note: its AGENTS.md edit was based on 9796325 and would
+  revert my 64afe26 handoff entry; recommend rebase onto main before merge,
+  keeping append-only history intact (rule #5).
 - 2026-10-23 qwen-coder: audited codex changelog vs repo; found fixes uncommitted; committed missing items as 17ce09f (`build:` + Co-authored-by). Remote f202348..HEAD now contains all changelog items. Pending: final `idf.py build` verification by whoever has IDF toolchain.
 
 ## Handoff notes (append-only)
