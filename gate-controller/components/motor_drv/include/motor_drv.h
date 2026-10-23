@@ -16,6 +16,7 @@
 #include <stdbool.h>
 #include "esp_err.h"
 #include "common_types.h"
+#include "storage_nvs.h"   /* mains_freq_sel_t (regional 50/60 Hz selection) */
 
 typedef enum {
     MDRV_IDLE, MDRV_RAMPING, MDRV_RUNNING, MDRV_DECEL, MDRV_FAULT

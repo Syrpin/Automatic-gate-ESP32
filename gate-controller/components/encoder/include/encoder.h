@@ -28,7 +28,7 @@ float     encoder_speed_counts_per_s(void);   /* for pinch & ramp-down calc  */
 /* Cross-check hook used by gate_logic: does motion agree with commanded dir? */
 bool      encoder_dir_matches(gate_dir_t cmd, uint32_t window_ms);
 void      encoder_set_position_raw(int32_t p); /* trusted restore from NVS */
-#ifdef CONFIG_GATE_SIM
-/* simulator feed: add counts as if the sensor produced them (HIL tests) */
+/* simulator feed: add counts as if the sensor produced them (HIL tests).
+ * Always declared/defined: the sim component is a build-time dependency and
+ * must see this API regardless of the local CONFIG_GATE_SIM state. */
 void      encoder_add_sim_counts(int32_t d);
-#endif

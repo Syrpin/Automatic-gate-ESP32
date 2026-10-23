@@ -13,7 +13,10 @@
  *    the "DI encoder via GPIO ISR" fallback (ENC_USE_GPIO_ISR, plan p.11.1).
  */
 #pragma once
+#include <stdbool.h>
+#include <stdint.h>
 #include "esp_err.h"
+#include "esp_adc/adc_cali_scheme.h"   /* ADC_CHANNEL_* ids (ESP-IDF >=5.3 naming) */
 
 /* ---- Power stage: triac (phase-angle) + direction relays ------------------ */
 #define PIN_TRIAC_PWM          10   /* MCPWM0A -> gate via opto-triac driver      */
@@ -55,9 +58,9 @@
 #define PIN_IR_ILLUM           39   /* 850nm LED driver EN (plan p.12.2 option)   */
 
 /* ---- Analog ----------------------------------------------------------------*/
-#define CH_CURRENT_CT          ADC1_CHANNEL_0  /* GPIO1: CT clamp RMS              */
-#define CH_BATTERY             ADC1_CHANNEL_2  /* GPIO3: divider from batt pack    */
-#define CH_TEMP_BATT           ADC1_CHANNEL_3  /* GPIO4: NTC for thermal interlock */
+#define CH_CURRENT_CT          ADC_CHANNEL_0  /* GPIO1: CT clamp RMS              */
+#define CH_BATTERY             ADC_CHANNEL_2  /* GPIO3: divider from batt pack    */
+#define CH_TEMP_BATT           ADC_CHANNEL_3  /* GPIO4: NTC for thermal interlock */
 
 /* ---- Runtime board profile --------------------------------------------------*/
 typedef enum { BOARD_DEVKIT_S3, BOARD_CUSTOM_V1 } board_id_t;

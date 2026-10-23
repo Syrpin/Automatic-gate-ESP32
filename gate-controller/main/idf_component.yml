@@ -1,8 +1,4 @@
-## Managed components for gate-controller (ESP-IDF >= 5.2)
-dependencies:
-  esp-idf/esp_wifi:
-    version: "*"
-  espressif/esp_wifi_connect:
-    version: "^1"
-    rules:
-      - if: "idf_version >=5.0 && gate_sim"
+## Managed components for gate-controller (ESP-IDF >= 5.2 / 6.0).
+# Wi-Fi API ships with ESP-IDF itself; the esp_wifi_connect component is not
+# used anywhere in this project, so no managed dependencies are declared here.
+dependencies: {}

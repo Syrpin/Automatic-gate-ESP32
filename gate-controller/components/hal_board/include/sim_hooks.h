@@ -5,12 +5,16 @@
  */
 #pragma once
 #include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #ifdef CONFIG_GATE_SIM
+/* Extern declarations: implemented once in sim.c (built with
+ * SIM_IMPLEMENTATION). Drivers that include this header must link against
+ * the sim component when CONFIG_GATE_SIM is enabled. */
 bool  sim_button_active(void);          /* true => buttons_sample reads sim levels   */
 int   sim_button_level(int idx);        /* 0=OPEN 1=STOP 2=CLOSE; active-low level    */
 bool  sim_limit_active(void);           /* true => limit_sw_scan reads sim levels     */

@@ -447,9 +447,9 @@ static void sim_engine_task(void *arg)
     for (;;) {
         sim_plant_step(10);
         int32_t d;
-        taskENTER_CRITICAL(&s_mux, NULL);
+        taskENTER_CRITICAL(&s_mux);
         d = s_enc_pending; s_enc_pending = 0;
-        taskEXIT_CRITICAL(&s_mux, NULL);
+        taskEXIT_CRITICAL(&s_mux);
         if (d) encoder_add_sim_counts(d);
         vTaskDelay(pdMS_TO_TICKS(10));
     }

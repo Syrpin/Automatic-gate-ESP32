@@ -112,12 +112,11 @@ bool encoder_dir_matches(gate_dir_t cmd, uint32_t window_ms)
 void encoder_set_position_raw(int32_t p){ taskENTER_CRITICAL(&s_mux); e.pos=p; e.raw_delta=0; taskEXIT_CRITICAL(&s_mux);
     e.last_change_ms=(uint32_t)(esp_timer_get_time()/1000); e.status=ENC_OK; }
 
-#ifdef CONFIG_GATE_SIM
-/* simulator feed: behaves exactly like real ISR-produced deltas */
+/* simulator feed: behaves exactly like real ISR-produced deltas.
+ * Always compiled (see encoder.h): sim component links against it. */
 void encoder_add_sim_counts(int32_t d)
 {
     taskENTER_CRITICAL(&s_mux);
     e.raw_delta += d;
     taskEXIT_CRITICAL(&s_mux);
 }
-#endif
