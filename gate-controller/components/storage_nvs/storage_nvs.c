@@ -27,6 +27,15 @@ static gate_config_t s_cfg = {
 #else
     .mains_freq        = MAINS_FREQ_AUTO, /* Kconfig default: AUTO-detect   */
 #endif
+    /* DECISION 2026: ZMCT103C split-core CT is the PRIMARY sensor —
+     * galvanic isolation, zero offset drift, AC-only is fine (pinch/RMS
+     * protection is inherently mains-synced; battery telemetry dropped by
+     * decision, so no DC-capable Hall channel is needed). The Hall front
+     * end (ACS712/ACS723 class) remains selectable as legacy bring-up
+     * fallback (devkit / variant-A board). Kconfig GATE_CT_* only changes
+     * this first-boot default; runtime switch: NVS / web UI / "ct" console. */
+    .ct_sensor         = CT_SEL_ZMCT, .ct_k_mv_per_a = 22,
+    .ct_vref_mv        = 3300, .ct_i_full_a = 30,
     .pinch_detect_en   = true,
     .ir_illum_policy_off = true,
 };
@@ -45,9 +54,22 @@ static bool validate(const gate_config_t *c)
         return false;
     if (c->region_code == 1 && c->mains_freq == MAINS_FREQ_60HZ) return false; /* EU w/ 60Hz */
     if (c->region_code == 2 && c->mains_freq == MAINS_FREQ_50HZ) return false; /* US w/ 50Hz */
+    /* CT variant: only HALL/ZMCT known; per-variant plausible K range guards
+     * against swapped values (Hall 30A=66 mV/A vs ZMCT burden 22 mV/A). */
+    if (c->ct_sensor != CT_SEL_HALL && c->ct_sensor != CT_SEL_ZMCT) return false;
+    if (c->ct_k_mv_per_a) {
+        uint16_t lo = (c->ct_sensor == CT_SEL_ZMCT) ? 5 : 20;
+        uint16_t hi = (c->ct_sensor == CT_SEL_ZMCT) ? 200 : 400;
+        if (c->ct_k_mv_per_a < lo || c->ct_k_mv_per_a > hi) return false;
+    }
+    if (c->ct_i_full_a && c->ct_i_full_a > 100) return false;
     return true;
 }
 
+/* Layout migration: configs committed before the ct_* fields existed
+ * deserialize with a blob smaller than the struct. Keep the stored prefix,
+ * backfill the new tail from compile-time defaults, and re-save — so an old
+ * NVS image never silently runs with bogus K/G on a ZMCT board. */
 esp_err_t storage_nvs_init(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -60,11 +82,24 @@ esp_err_t storage_nvs_init(void)
 
     nvs_handle_t h;
     if (nvs_open(NS, NVS_READONLY, &h) == ESP_OK) {
-        size_t sz = sizeof s_cfg;
-        if (nvs_get_blob(h, "gate", &s_cfg, &sz) == ESP_OK && !validate(&s_cfg)) {
-            ESP_LOGE(TAG, "stored config invalid -> defaults");
+        gate_config_t tmp = s_cfg;              /* compile-time defaults   */
+        size_t sz = sizeof tmp;
+        bool migrated = false;
+        if (nvs_get_blob(h, "gate", &tmp, &sz) == ESP_OK) {
+            if (sz < sizeof tmp) {              /* legacy blob -> backfill  */
+                const char *def = (const char*)&s_cfg;
+                char *dst = (char*)&tmp;
+                for (size_t i = sz; i < sizeof tmp; i++) dst[i] = def[i];
+                migrated = true;
+            }
+            if (validate(&tmp)) s_cfg = tmp;
+            else ESP_LOGE(TAG, "stored config invalid -> defaults");
         }
         nvs_close(h);
+        if (migrated) {
+            ESP_LOGI(TAG, "config layout upgraded (ct_* fields), re-saving");
+            storage_cfg_commit(&s_cfg);
+        }
     }
     return ESP_OK;
 }

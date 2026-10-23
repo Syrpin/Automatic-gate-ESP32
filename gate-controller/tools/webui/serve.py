@@ -25,6 +25,9 @@ class Sim:
         self.lim_fault, self.plant = False, True
         self.ac_sel, self.ac_meas, self.zc = 0, 50, False  # AUTO, line freq
         self.region = 1
+        # CT front-end variant: ZMCT103C is PRIMARY (decision 2026);
+        # "hall" selectable as legacy bring-up fallback. K_eff mV/A per doc.
+        self.ct_sensor = "ZMCT103C"; self.ct_k = 22
         self.log = []
         self.ev("boot", "simulator ready")
     def ev(self, k, m):
@@ -35,6 +38,14 @@ class Sim:
             if c == "open":  self.target, self.state = self.travel, "MOVING_OPEN"; self.ev("gate", "cmd open")
             if c == "close": self.target, self.state = 0, "MOVING_CLOSE"; self.ev("gate", "cmd close")
             if c == "stop":  self.target, self.state, self.dir = self.pos, "IDLE_MID", 0; self.ev("gate", "cmd stop")
+            # device-identical console grammar: "ct zmct [K]" / "ct hall [K]"
+            parts = c.split()
+            if len(parts) >= 2 and parts[0] == "ct" and parts[1] in ("zmct", "hall"):
+                self.ct_sensor = "ZMCT103C" if parts[1] == "zmct" else "HALL"
+                self.ct_k = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() \
+                            else (22 if parts[1] == "zmct" else 66)
+                cfg_save({"ct_sensor": parts[1], "ct_k_mv_per_a": self.ct_k})
+                self.ev("config", f"ct := {self.ct_sensor} K={self.ct_k} mV/A (persisted)")
     def tick(self):
         while True:
             time.sleep(0.05)
@@ -86,7 +97,8 @@ class Sim:
                 relays=self.mdrv & 3, relays_ok=True, enc_status=0, log_dropped=0,
                 ac_sel=self.ac_sel, ac_meas=self.ac_meas,
                 ac_half_us=(1000000 // self.ac_meas) if self.ac_meas else 0,
-                zc_sim=self.zc, region=self.region, i_fullscale_a=30.0)
+                zc_sim=self.zc, region=self.region, i_fullscale_a=30.0,
+                ct_sensor=self.ct_sensor, ct_k_mv_per_a=self.ct_k)
 
 CFG_PATH = Path(__file__).resolve().parent / "config.json"
 def cfg_save(d):
@@ -100,6 +112,10 @@ try:
     _c = json.loads(CFG_PATH.read_text()) if CFG_PATH.exists() else {}
     SIM.ac_sel = int(_c.get("mains_freq", 0)); SIM.region = int(_c.get("region_code", 1))
     SIM.ac_meas = 60 if SIM.ac_sel == 60 else 50
+    _cts = _c.get("ct_sensor")
+    if _cts in ("zmct", "hall"):
+        SIM.ct_sensor = "ZMCT103C" if _cts == "zmct" else "HALL"
+        SIM.ct_k = int(_c.get("ct_k_mv_per_a", 22 if _cts == "zmct" else 66))
 except Exception: pass
 
 class H(BaseHTTPRequestHandler):

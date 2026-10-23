@@ -97,10 +97,23 @@ void app_main(void)
     ESP_ERROR_CHECK(limit_sw_init());
     ESP_ERROR_CHECK(buttons_init());
     ESP_ERROR_CHECK(current_sense_init());  /* ADC1 + DMA, zero-cross reference */
-    /* CT front end per SCHEMATIC.md §2: ACS712-30A class on 3.3 V,
-     * G=(3100-1650)/(66*30)=0.73 -> full scale 30 A; thresholds in amps
-     * are independent of mains region and sensor variant. */
-    current_sense_set_front_end(66 /*K mV/A*/, 3300 /*VCC*/, 30 /*I_full*/, 0);
+    /* CT front end from NVS config. PRIMARY variant (decision 2026):
+     * ZMCT103C + 2x22R bipolar burden: K_eff=22 mV/A, static buffered
+     *   mid-rail (docs/CT_WIRING.md); AC-only — battery telemetry dropped.
+     * LEGACY fallback (devkit / variant-A footprint):
+     *   HALL ACS712-30A class on 3.3 V: K=66 mV/A, ratiometric midrail.
+     * G derived: (3100-VCC/2)/(K*I_full) -> 0.73 (HALL) / 2.20 (ZMCT);
+     * thresholds in amps are variant- and region-independent. */
+    {
+        const gate_config_t *c = storage_cfg();
+        ct_sensor_t t = (c->ct_sensor == CT_SEL_ZMCT) ? CT_SENSOR_ZMCT
+                                                      : CT_SENSOR_HALL;
+        uint16_t k   = c->ct_k_mv_per_a ? c->ct_k_mv_per_a
+                     : (t == CT_SENSOR_ZMCT ? 22u : 66u);
+        uint16_t vcc = c->ct_vref_mv   ? c->ct_vref_mv : 3300u;
+        uint16_t ifull = c->ct_i_full_a ? c->ct_i_full_a : 30u;
+        current_sense_set_front_end(t, k, vcc, ifull, 0);
+    }
     /* Relays/triac are in safe-state since hal_board_init(); measure the
      * ratiometric midrail now, before any motion. Non-fatal on a bare
      * board with no CT connected: thresholds simply stay at raw default. */

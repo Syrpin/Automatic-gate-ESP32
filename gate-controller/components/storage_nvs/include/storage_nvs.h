@@ -24,6 +24,16 @@ typedef enum {
     MAINS_FREQ_60HZ = 60,
 } mains_freq_sel_t;
 
+/* Current-sensor variant fitted on the board (custom PCB carries both
+ * footprints — easyeda/gate_v1_netlist.json; exactly one is populated):
+ *   0 HALL : ACS712/ACS723 class + RRIO mixer (ratiometric, DC-capable)
+ *   1 ZMCT : ZMCT103C split-core CT + bipolar burden on buffered mid-rail
+ *            (AC only; battery telemetry then comes from VBAT divider only)
+ * K/G semantics: see current_sense_set_front_end(). */
+typedef uint8_t ct_sensor_sel_t;
+#define CT_SEL_HALL 0u
+#define CT_SEL_ZMCT 1u
+
 typedef struct {
     /* mechanical calibration */
     int32_t  travel_counts;      /* closed->open in encoder counts          */
@@ -41,6 +51,12 @@ typedef struct {
     uint8_t  region_code;        /* informational only: 0=other 1=RU/EU-50
                                     2=US/JP-60 — drives defaults/UI hints,
                                     never changes control behavior directly */
+    ct_sensor_sel_t ct_sensor;   /* fitted current sensor variant           */
+    uint16_t ct_k_mv_per_a;      /* transfer fn mV/A: HALL datasheet K,
+                                    ZMCT burden slope Rb/N (0 -> built-in)   */
+    uint16_t ct_vref_mv;         /* analog supply (HALL) / buffered VREF
+                                  * (ZMCT); 0 -> 3300                        */
+    uint16_t ct_i_full_a;        /* full-scale current for G derivation     */
     bool     pinch_detect_en;
     bool     ir_illum_policy_off;/* keep IR disabled until night decision   */
 } gate_config_t;

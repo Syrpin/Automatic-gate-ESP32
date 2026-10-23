@@ -5,3 +5,4 @@ cookies.txt
 *.cookies
 .env
 easyeda/cookies*
+gate-controller/tools/webui/config.json

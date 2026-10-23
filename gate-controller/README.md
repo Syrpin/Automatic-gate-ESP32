@@ -51,6 +51,16 @@ DVP-пины пересекаются с sensing-пинами (см. комме�
   VCC_mV, I_full_A, gain)` computes G=(3100−VCC/2)/(K·I_full); midrail is
   measured at boot (motor off), RMS window spans integer mains half-cycles.
   Verified on host: full-scale error ≤0.1 % for ACS712-30A/20A/05B profiles.
+- DECISION 2026 — current sensor: ZMCT103C split-core CT is the PRIMARY
+  variant (default at first boot; K_eff=22 mV/A via 2x22R bipolar burden,
+  buffered static mid-rail — wiring in docs/CT_WIRING.md). AC-only is fine:
+  pinch/RMS protection is inherently mains-synced and battery telemetry was
+  dropped by decision. Hall (ACS712-class, K=66) remains selectable as a
+  legacy bring-up fallback (devkit / variant-A footprint). Runtime switch:
+  web UI "CT" selector, console `ct zmct|hall [K]`, persisted in NVS
+  (device) / config.json (python twin). Host-verified: G=0.73 (HALL) /
+  2.20 (ZMCT), A/LSB≈0.0156 both variants (thresholds are amp-based and
+  variant-independent). Kconfig default moved to CONFIG_GATE_CT_ZMCT.
 - See SCHEMATIC.md for the legacy-board review (D1..D8 defects) and the v1
   custom-board spec (MOC3052 random-phase optos, RC snubbers, RRIO amp,
   DC-DC+low-noise LDO power tree, pin map contract).

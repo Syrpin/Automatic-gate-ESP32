@@ -16,4 +16,23 @@ choice GATE_MAINS_FREQ_DEFAULT
         bool "60 Hz (US/CA/MX, JP-west, SA, KR/TW)"
 endchoice
 
+choice GATE_CT_DEFAULT
+    bool "Default current-sensor variant (first boot)"
+    default GATE_CT_ZMCT
+    help
+        Initial value of gate_config.ct_sensor. DECISION 2026: ZMCT103C
+        split-core CT is the PRIMARY sensor (galvanic isolation, zero
+        offset drift, cheap; AC-only is fine for pinch/RMS protection and
+        battery telemetry was dropped by decision). The Hall front end
+        (ACS712/ACS723 class) stays selectable as legacy bring-up fallback
+        (devkit / variant-A footprint on custom board v1). Runtime-
+        selectable via NVS / web UI / console ("ct") — this choice only
+        sets the first-boot default.
+
+    config GATE_CT_ZMCT
+        bool "ZMCT103C transformer (burden 2x22R, K_eff=22 mV/A, AC-only) [PRIMARY]"
+    config GATE_CT_HALL
+        bool "Hall ratiometric (ACS712-30A class, K=66 mV/A, DC-capable) [legacy fallback]"
+endchoice
+
 endmenu

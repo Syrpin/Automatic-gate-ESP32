@@ -14,14 +14,17 @@
 
 static const char *TAG="ct";
 
-/* ---- sensor front-end constants (see SCHEMATIC.md §2) --------------------
- * ACS712-xxA: ratiometric, Vout = VCC/2 ± K·I, K = 185/100/66 mV/A for the
- * 05B/20A/30A variants.  Gain stage: non-inverting x G about VCC/2 so full
- * swing fits the ESP32-S3 ADC1 input range at ATTEN_DB_12 (~0..3.1 V):
- *   usable half-rail span U = 3.1 - VCC/2;  I_full = sensor max current
- *   G = U / (K·I_full)      e.g. ACS712-30A @ VCC=3.3:  1.45/(0.066·30)=0.73
- * Midrail in raw LSB is MEASURED at init (motor off) — tracks VCC exactly,
- * no resistor-divider error. */
+/* ---- sensor front-end constants (SCHEMATIC.md §2, SCHEMATIC_2026 §1.3,
+ * docs/CT_WIRING.md) -------------------------------------------------------
+ * HALL (ACS712-xxA class): ratiometric, Vout = VCC/2 +/- K*I, K = 185/100/66
+ * mV/A for the 05B/20A/30A variants; midrail MEASURED at boot tracks VCC.
+ * ZMCT103C: AC transformer, bipolar output around a BUFFERED static mid-rail
+ * (VREF divider + MCP6002 #1); effective slope K_eff = Rb/N [mV/A], e.g.
+ * 22R/1000T = 22 mV/A; no ratiometry — midrail sanity-checked vs VREF.
+ * Gain stage about the rail midpoint so full swing fits ADC1 ATTEN_DB_12
+ * (~0..3.1 V):   usable half-rail span U = 3.1 - VCC/2
+ *   G = U / (K*I_full)      e.g. ACS712-30A @ 3.3 V: 1.45/(0.066*30)=0.73
+ *                              ZMCT variant-B    : 1.45/(0.022*30)=2.20 */
 #define ADC_VREF_MV      3100   /* ATTEN_DB_12 usable top, mV               */
 #define ADC_LSB_MV       (ADC_VREF_MV / 4095.0f)
 #define WIN_N 1024   /* window capacity; actual length = whole mains periods
@@ -33,8 +36,9 @@ static float rms_last;
 static int32_t s_mid_raw = 2048;        /* measured midrail, LSB            */
 static float   s_amps_per_lsb = 0.0f;   /* calibration constant, A/LSB      */
 static uint16_t s_gain_x1000 = 1000;    /* front-end gain G, 0.001 units    */
-static uint16_t s_k_mv_per_a = 100;     /* sensor K, mV/A                   */
-static uint16_t s_vcc_mv = 3300;        /* analog supply of the sensor      */
+static uint16_t s_k_mv_per_a = 100;     /* sensor transfer fn, mV/A         */
+static uint16_t s_vcc_mv = 3300;        /* analog supply / buffered VREF    */
+static ct_sensor_t s_type = CT_SENSOR_HALL;
 static uint32_t over_since_ms; static bool over_latched; static bool inrush_hit;
 static int64_t buf[WIN_N]; static size_t bi;
 
@@ -47,17 +51,24 @@ esp_err_t current_sense_init(void){
 }
 
 /* Configure the sensor front end once at boot (values from NVS config):
- *   k_mv_per_a : sensor transfer function, mV/A (ACS712-05B=185, 20A=100,
- *                30A=66; hall CT modules per datasheet)
- *   vcc_mv     : sensor analog supply (ratiometric -> midrail tracks it)
- *   i_full_a   : current that must map to full ADC scale (e.g. 30 for a
- *                30 A part) — used ONLY to derive G when gain_x1000==0:
+ *   type       : CT_SENSOR_HALL (ratiometric) or CT_SENSOR_ZMCT (AC, static
+ *                buffered mid-rail). RMS math is identical; only the
+ *                midrail calibration semantics differ.
+ *   k_mv_per_a : transfer function, mV/A. HALL: datasheet K (ACS712-05B=185,
+ *                20A=100, 30A=66). ZMCT: effective burden slope Rb/N
+ *                (ZMCT103C 1000T + 2x22R bipolar burden -> 22 mV/A).
+ *   vcc_mv     : HALL analog supply (ratiometric -> midrail tracks it);
+ *                ZMCT the buffered VREF rail feeding the mid-rail divider.
+ *   i_full_a   : current that must map to full ADC scale — used ONLY to
+ *                derive G when gain_x1000==0:
  *                   G = (ADC_VREF_MV - vcc_mv/2) / (k_mv_per_a * i_full_a)
- *   gain_x1000 : explicit front-end gain in 0.001 units (0 -> compute as above)
+ *   gain_x1000 : explicit front-end gain in 0.001 units (0 -> compute above)
  * Resulting constant:  A/LSB = 1 / (K * G * LSB_mV)  [all in mV units] */
-void current_sense_set_front_end(uint16_t k_mv_per_a, uint16_t vcc_mv,
-                                 uint16_t i_full_a, uint16_t gain_x1000)
+void current_sense_set_front_end(ct_sensor_t type, uint16_t k_mv_per_a,
+                                 uint16_t vcc_mv, uint16_t i_full_a,
+                                 uint16_t gain_x1000)
 {
+    s_type = type;
     if (k_mv_per_a) s_k_mv_per_a = k_mv_per_a;
     if (vcc_mv)     s_vcc_mv     = vcc_mv;
     if (gain_x1000) {
@@ -73,11 +84,21 @@ void current_sense_set_front_end(uint16_t k_mv_per_a, uint16_t vcc_mv,
      *   I = d * LSB_mV / (K[mV/A] * G)      =>  A/LSB = LSB_mV/(K*G)      */
     s_amps_per_lsb = (float)(((double)ADC_LSB_MV) /
                         ((double)s_k_mv_per_a * (s_gain_x1000/1000.0)));
-    ESP_LOGI(TAG,"CT frontend: K=%u mV/A VCC=%u mV G=%.3f -> %.4f A/LSB",
-             s_k_mv_per_a, s_vcc_mv, s_gain_x1000/1000.0, (double)s_amps_per_lsb);
+    ESP_LOGI(TAG,"CT frontend %s: K=%u mV/A VCC/VREF=%u mV G=%.3f -> %.4f A/LSB",
+             current_sense_sensor_name(), s_k_mv_per_a, s_vcc_mv,
+             s_gain_x1000/1000.0, (double)s_amps_per_lsb);
 }
 
-/* Measure midrail (motor OFF): average of 64 samples right after init. */
+const char *current_sense_sensor_name(void){
+    return s_type==CT_SENSOR_ZMCT ? "ZMCT103C" : "HALL";
+}
+ct_sensor_t current_sense_sensor_type(void){ return s_type; }
+
+/* Measure the quiescent midrail with motor OFF (64-sample average).
+ * HALL : ratiometric VCC/2 — the measurement IS the calibration (tracks any
+ *        supply deviation exactly).
+ * ZMCT : static buffered VREF divider — same procedure works (the burden is
+ *        referenced to that rail); expected value derives from vcc_mv arg. */
 esp_err_t current_sense_calibrate_midrail(void){
     if(!uh) return ESP_ERR_INVALID_STATE;
     int64_t acc=0; int ok=0;

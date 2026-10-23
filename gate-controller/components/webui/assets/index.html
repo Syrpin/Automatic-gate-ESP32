@@ -93,6 +93,11 @@ padding:10px;height:220px;overflow:auto;font-size:11px;white-space:pre-wrap;marg
         <option value="60">60 Hz (US/JP)</option>
       </select>
       <label class="chk"><input type="checkbox" id="zc" onchange="zcsim(this.checked?50:0)">virtual ZC</label>
+      <b style="align-self:center">CT:</b>
+      <select id="ctsel" onchange="ctset(this.value)" style="background:var(--panel);color:var(--txt);border:1px solid var(--line);padding:4px 8px;border-radius:6px">
+        <option value="zmct">ZMCT103C (primary)</option>
+        <option value="hall">Hall ACS712 (legacy)</option>
+      </select>
     </div>
   </div>
 
@@ -129,6 +134,7 @@ function injectOff(){post('/api/sim',{i:-1})}
 function mains(on){post('/api/sim',{mains:on})}
 function plant(on){post('/api/sim',{plant:on})}
 function acset(v){post('/api/sim',{ac:+v})}
+function ctset(v){cmd('ct '+v)}
 function zcsim(hz){post('/api/sim',{zc:hz<0?-1:hz})}
 const MD=['IDLE','PREPARE','RAMPING','RUNNING','DECEL','BRAKE','FAULT'];
 async function poll(){
@@ -152,6 +158,8 @@ async function poll(){
   const acn={0:'AUTO',50:'50 Hz',60:'60 Hz'};
   $('acf').textContent=(acn[s.ac_sel]||s.ac_sel)+(s.ac_meas?' · meas '+s.ac_meas+'Hz':'')+(s.ac_half_us?' · half '+s.ac_half_us+'µs':'');
   if(document.activeElement!==$('acsel')) $('acsel').value=String(s.ac_sel);
+  if(s.ct_sensor&&document.activeElement!==$('ctsel'))
+    $('ctsel').value=(s.ct_sensor==='ZMCT'||s.ct_sensor===1)?'zmct':'hall';
   $('zc').checked=!!s.zc_sim;
   $('limfault').innerHTML=s.lim_fault?'<span class="pill p-err">LIMIT WIRE FAULT</span>':'';
   $('lc').checked=s.lim_closed; $('lo').checked=s.lim_open;

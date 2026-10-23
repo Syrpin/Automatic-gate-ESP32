@@ -167,6 +167,7 @@ int sim_status_json(char *buf, int cap)
         "\"lim_closed\":%s,\"lim_open\":%s,\"lim_fault\":%s,"
         "\"relays\":%u,\"relays_ok\":%s,\"enc_status\":%d,"
         "\"ac_sel\":%d,\"ac_meas\":%u,\"ac_half_us\":%u,\"zc_sim\":%s,\"region\":%u,\"i_fullscale_a\":%.1f,"
+        "\"ct_sensor\":\"%s\",\"ct_k_mv_per_a\":%u,"
         "\"log_dropped\":%u}",
         s.position, s.target, (int)storage_cfg()->travel_counts,
         state_name(s.state), (int)motor_drv_state(), (int)motor_drv_direction(),
@@ -181,6 +182,8 @@ int sim_status_json(char *buf, int cap)
         sim_zc_running() ? "true" : "false",
         (unsigned)storage_cfg()->region_code,
         (double)current_sense_fullscale_a(),
+        current_sense_sensor_name(),
+        (unsigned)storage_cfg()->ct_k_mv_per_a,
         (unsigned)events_log_dropped());
 }
 
@@ -355,6 +358,40 @@ static int cmd_cfg(int argc, char **argv)
     return 0;
 }
 
+/* Current-sensor variant + transfer function (board hardware selection).
+ * Re-applies the front end immediately; thresholds in amps stay unchanged. */
+static int cmd_ct(int argc, char **argv)
+{
+    if (argc < 2) {
+        printf("ct=%s K=%u mV/A VREF=%u mV I_full=%u A fullscale=%.1f A\n",
+               current_sense_sensor_name(),
+               (unsigned)storage_cfg()->ct_k_mv_per_a,
+               (unsigned)storage_cfg()->ct_vref_mv,
+               (unsigned)storage_cfg()->ct_i_full_a,
+               (double)current_sense_fullscale_a());
+        printf("usage: ct hall [K] | ct zmct [K]   (K mV/A, 0=datasheet def)\n");
+        return 0;
+    }
+    gate_config_t c = *storage_cfg();
+    if      (!strcmp(argv[1], "hall")) c.ct_sensor = CT_SEL_HALL;
+    else if (!strcmp(argv[1], "zmct")) c.ct_sensor = CT_SEL_ZMCT;
+    else { printf("bad value\n"); return 1; }
+    c.ct_k_mv_per_a = (argc >= 3) ? (uint16_t)atoi(argv[2]) : 0; /* 0 -> default */
+    esp_err_t e = storage_cfg_commit(&c);
+    if (e != ESP_OK) { printf("commit failed (%s): implausible K for variant?\n",
+                              esp_err_to_name(e)); return 1; }
+    uint16_t k = c.ct_k_mv_per_a ? c.ct_k_mv_per_a
+                 : (c.ct_sensor == CT_SEL_ZMCT ? 22u : 66u);
+    current_sense_set_front_end(c.ct_sensor == CT_SEL_ZMCT ? CT_SENSOR_ZMCT
+                                                           : CT_SENSOR_HALL,
+                                k, c.ct_vref_mv ? c.ct_vref_mv : 3300u,
+                                c.ct_i_full_a ? c.ct_i_full_a : 30u, 0);
+    events_log_write(EV_POWER, "ct := %s K=%u mV/A", argv[1], (unsigned)k);
+    printf("ct := %s K=%u mV/A (persisted; fullscale %.1f A)\n",
+           argv[1], (unsigned)k, (double)current_sense_fullscale_a());
+    return 0;
+}
+
 static int cmd_fault(int argc, char **argv)
 {
     if (argc < 2) { printf("usage: fault both-limits|stall|nocurrent\n"); return 1; }
@@ -396,6 +433,7 @@ static int cmd_help(int argc, char **argv)
 "  ac zc 50|60|0              virtual zero-cross generator (bare-board test)\n"
 "  cfg mains_freq auto|50|60  persist regional pick to NVS\n"
 "  region eu|us|auto          full regional profile (freq+code, validated)\n"
+"  ct [hall|zmct] [K mV/A]    current-sensor variant (show/set, persisted)\n"
 "  fault both-limits|stall|nocurrent   canned safety drills\n"
 "  reset                      reboot device\n"
 "Web UI: http://<device-ip>/ when Wi-Fi is up - mirrors all controls.\n");
@@ -447,6 +485,7 @@ esp_err_t sim_console_start(void)
         { .command = "ac",     .help = "regional mains freq / ZC sim", .func = cmd_ac },
         { .command = "cfg",    .help = "persist config to NVS", .func = cmd_cfg },
         { .command = "region", .help = "regional profile eu|us|auto", .func = cmd_region },
+        { .command = "ct",     .help = "CT sensor hall|zmct [K]", .func = cmd_ct },
         { .command = "fault",  .help = "safety drills",        .func = cmd_fault },
         { .command = "reset",  .help = "reboot",               .func = cmd_reset },
         { .command = "help",   .help = "this text",            .func = cmd_help },
