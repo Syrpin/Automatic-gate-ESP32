@@ -1,6 +1,6 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
-#include "task.h"
+#include "freertos/task.h"
 #include "esp_timer.h"
 #include "esp_log.h"
 #include "encoder.h"
@@ -79,6 +79,10 @@ static bool set_motor_command(gate_dir_t dir,uint8_t throttle,
 static void request_move(gate_dir_t dir,int32_t target,uint8_t throttle,
                          gate_state_t state,const char *reason){
     if(G.st==GS_FAULT) return;
+    if(G.st==GS_CALIBRATING){
+        ESP_LOGW(TAG,"ignoring motion command during homing");
+        return;
+    }
     if(motor_drv_state()==MDRV_FAULT){
         latch_fault("motor driver fault before command",ESP_OK);
         return;
@@ -254,10 +258,10 @@ void gate_logic_step(const TickPeriod_t *tp){
         if(L->wire_fault||(L->at_closed&&L->at_open)){
             latch_fault("limit wire fault",ESP_OK);
         } else if(G.st==GS_MOVING_CLOSE && L->at_closed){
-            motor_drv_stop(true); encoder_set_origin_closed();
+            motor_drv_stop(false); encoder_set_origin_closed();
             to(GS_IDLE_CLOSED,"closed"); storage_save_position(0,0,true);
         } else if(G.st==GS_MOVING_OPEN && L->at_open){
-            motor_drv_stop(true); encoder_set_origin_open();
+            motor_drv_stop(false); encoder_set_origin_open();
             to(GS_IDLE_OPEN,"opened"); storage_save_position(c->travel_counts,0,true);
         } else if(check_pinch_or_stall(tp)){
             /* The safety check changed the state and stopped the motor. */
@@ -278,7 +282,7 @@ void gate_logic_step(const TickPeriod_t *tp){
         if(L->wire_fault||(L->at_closed&&L->at_open)){
             latch_fault("limit wire fault during homing",ESP_OK);
         } else if(L->at_closed){
-            motor_drv_stop(true); encoder_set_origin_closed();
+            motor_drv_stop(false); encoder_set_origin_closed();
             to(GS_IDLE_CLOSED,"homed"); storage_save_position(0,0,true); }
         else if((uint32_t)(tp->now_ms-G.homing_start_ms)>=HOMING_TIMEOUT_MS){
             latch_fault("homing timeout",ESP_OK);
