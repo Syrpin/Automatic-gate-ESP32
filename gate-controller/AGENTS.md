@@ -25,6 +25,10 @@
 - 2026-10-23 qwen-coder: repo layout restructured per owner request — active
   project is `gate-controller/` (build from inside it). STM32F103 legacy
   sources moved to `legacy-stm32-f103/` (read-only reference, pure git mv,
-  no content changes). Root now holds only: AGENTS.md, ESP32_PORT_PLAN.md,
+  no content changes). Root then held: AGENTS.md, ESP32_PORT_PLAN.md,
   easyeda/, legacy-stm32-f103/, gate-controller/. Other agents: update any
   scripts/docs that assume root-level build paths.
+- 2026-10-23 qwen-coder: AGENTS.md MOVED into the active project folder —
+  it now lives at `gate-controller/AGENTS.md` (repo root no longer contains
+  it). All paths in this file are relative to `gate-controller/`. Build
+  contract unchanged: `cd gate-controller && idf.py ...`.
