@@ -25,10 +25,13 @@ static struct {
     int32_t pos;              /* accumulated counts                         */
     volatile int32_t raw_delta;/* drained from ISR each tick                 */
     uint32_t last_change_ms;
+    uint32_t motion_start_ms;
     enc_status_t status;
     float    speed_cps;
     uint32_t prev_pos;
     pcnt_unit_handle_t unit;  /* custom-PCNT path only                      */
+    bool motor_active;
+    bool saw_motion_since_start;
 } e;
 
 /* ---------- devkit GPIO-ISR decode (quadrature subset) -------------------- */
@@ -48,6 +51,8 @@ esp_err_t encoder_init(void)
 {
     memset(&e, 0, sizeof e);
     e.status = ENC_OK;
+    e.last_change_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    e.motion_start_ms = e.last_change_ms;
     const hal_board_profile_t *p = hal_board_profile();
     if (p->enc_use_gpio_isr) {
         gpio_config_t gc = { .pin_bit_mask = (1ULL<<PIN_ENC_A)|(1ULL<<PIN_ENC_B),
@@ -69,6 +74,20 @@ esp_err_t encoder_init(void)
 
 void encoder_update(const TickPeriod_t *tp)
 {
+    mdrv_state_t motor_state = motor_drv_state();
+    bool motor_active = motor_state == MDRV_RAMPING ||
+                        motor_state == MDRV_RUNNING;
+    if (motor_active && !e.motor_active) {
+        e.motion_start_ms = tp->now_ms;
+        e.saw_motion_since_start = false;
+        e.speed_cps = 0.0f;
+        e.status = ENC_OK;
+    } else if (!motor_active && e.motor_active) {
+        e.status = ENC_OK;
+        e.saw_motion_since_start = false;
+    }
+    e.motor_active = motor_active;
+
     int32_t d;
     taskENTER_CRITICAL(&s_mux);
     d = e.raw_delta; e.raw_delta = 0;
@@ -80,9 +99,15 @@ void encoder_update(const TickPeriod_t *tp)
         e.pos = (np > INT32_MAX) ? INT32_MAX : (np < INT32_MIN) ? INT32_MIN : (int32_t)np;
         e.last_change_ms = tp->now_ms;
         e.status = ENC_OK;
-    } else if (motor_drv_state() != MDRV_IDLE &&
-               (uint32_t)(tp->now_ms - e.last_change_ms) > STALE_LIMIT_MS) {
+        if (motor_active) e.saw_motion_since_start = true;
+    }
+    if (motor_active &&
+        (uint32_t)(tp->now_ms -
+                   (e.saw_motion_since_start ? e.last_change_ms : e.motion_start_ms)) >
+            STALE_LIMIT_MS) {
         e.status = ENC_STALE;   /* motor energized, sensor silent -> fault */
+    } else if (!motor_active) {
+        e.status = ENC_OK;
     }
     /* speed: EMA over ticks */
     uint32_t dt = tp->period_ms;
@@ -102,11 +127,18 @@ void encoder_set_origin_open(void)   { e.pos = storage_cfg()->travel_counts; }
 bool encoder_dir_matches(gate_dir_t cmd, uint32_t window_ms)
 {
     if (cmd == DIR_NONE) return true;
-    if ((uint32_t)(esp_timer_get_time()/1000 - e.last_change_ms) < window_ms) {
-        int8_t sign = (e.speed_cps > 0) - (e.speed_cps < 0);
-        return (cmd == DIR_OPEN && sign >= 0) || (cmd == DIR_CLOSE && sign <= 0);
-    }
-    return false; /* stale while moving => sensor fault */
+    mdrv_state_t motor_state = motor_drv_state();
+    if (motor_state != MDRV_RAMPING && motor_state != MDRV_RUNNING) return true;
+    if (e.status == ENC_STALE) return false;
+
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    if (!e.motor_active) return true; /* command issued after this tick's encoder update */
+    if (!e.saw_motion_since_start)
+        return (uint32_t)(now_ms - e.motion_start_ms) <= STALE_LIMIT_MS;
+    if ((uint32_t)(now_ms - e.last_change_ms) < window_ms) return true;
+
+    int8_t sign = (e.speed_cps > 0) - (e.speed_cps < 0);
+    return (cmd == DIR_OPEN && sign > 0) || (cmd == DIR_CLOSE && sign < 0);
 }
 
 void encoder_set_position_raw(int32_t p){ taskENTER_CRITICAL(&s_mux); e.pos=p; e.raw_delta=0; taskEXIT_CRITICAL(&s_mux);
