@@ -52,25 +52,44 @@ static void safe_off(void)
     s.state = MDRV_IDLE;
 }
 
-esp_err_t motor_drv_init(void)
-{
-    memset(&s, 0, sizeof s);
-    hal_board_safe_state();
-    /* Zero-cross interrupt on PIN_MAINS_DETECT: */
-    gpio_set_intr_type(PIN_MAINS_DETECT, GPIO_INTR_NEGEDGE);
-    /* Phase B bring-up will do: gpio_install_isr_service(0); and route the
-       PIN_MAINS_DETECT handler to motor_drv_zero_cross_us() below. Until then
-       the hook is exercised from the ZC test pulse input (bench mode). */
-    ESP_LOGI(TAG, "init ok (deadtime=%dms)", DEADTIME_MS);
-    return ESP_OK;
-}
-
 /* ---------- zero-cross state: written ONLY by ISR, snapshotted for tasks ---- */
 static volatile int64_t  s_zc_last_us;   /* last ZC timestamp (ISR-owned)      */
 static volatile uint16_t s_half_ms = 10; /* measured mains half-period         */
 
-/* ISR-visible hook (called from GPIO isr handler once wired): */
-IRAM_ATTR void motor_drv_zero_cross_us(int64_t now_us)
+/* ISR-visible hook, defined below; forward decl so the GPIO trampoline can
+   call it. NOT part of the public API — task code uses the accessors. */
+void IRAM_ATTR motor_drv_zero_cross_us(int64_t now_us);
+
+/* GPIO ISR trampoline: fires on every mains zero-cross edge of
+   PIN_MAINS_DETECT (registered in motor_drv_init after the shared ISR
+   service was installed by hal_board_isr_service_install()).
+   esp_timer_get_time() is ISR-safe; keep the handler tiny — the heavy
+   lifting (phase delay) uses only the values updated here. */
+static void IRAM_ATTR zc_isr(void *arg)
+{
+    (void)arg;
+    motor_drv_zero_cross_us((int64_t)esp_timer_get_time());
+}
+
+esp_err_t motor_drv_init(void)
+{
+    memset(&s, 0, sizeof s);
+    hal_board_safe_state();
+    /* Zero-cross interrupt on PIN_MAINS_DETECT. The shared GPIO ISR service is
+       installed by main() BEFORE any driver init (hal_board_isr_service_install),
+       so registering the handler here is safe. Comparator output pulses low at
+       every mains zero crossing -> NEGEDGE. */
+    gpio_set_intr_type(PIN_MAINS_DETECT, GPIO_INTR_NEGEDGE);
+    ESP_RETURN_ON_ERROR(gpio_isr_handler_add(PIN_MAINS_DETECT, zc_isr, NULL),
+                        TAG, "zc isr add failed");
+    ESP_LOGI(TAG, "init ok (deadtime=%dms, zc isr on gpio %d)",
+             DEADTIME_MS, PIN_MAINS_DETECT);
+    return ESP_OK;
+}
+
+/* ISR-visible hook: called from the zc_isr GPIO trampoline above (and
+   exercisable directly from bench tests without mains). */
+void IRAM_ATTR motor_drv_zero_cross_us(int64_t now_us)
 {
     int64_t zl = s_zc_last_us;
     if (zl) {

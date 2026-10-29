@@ -49,6 +49,7 @@ static inline esp_err_t gpio_config(const gpio_config_t *c) { (void)c; return ES
 static inline esp_err_t gpio_set_level(gpio_num_t p, uint32_t l) { (void)p; (void)l; return ESP_OK; }
 static inline int gpio_get_level(gpio_num_t p) { (void)p; return 0; }
 static inline esp_err_t gpio_set_direction(gpio_num_t p, gpio_mode_t m) { (void)p; (void)m; return ESP_OK; }
+static inline esp_err_t gpio_set_intr_type(gpio_num_t p, gpio_int_type_t t) { (void)p; (void)t; return ESP_OK; }
 static inline esp_err_t gpio_set_pull_mode(gpio_num_t p, gpio_pull_mode_t m) { (void)p; (void)m; return ESP_OK; }
 static inline esp_err_t gpio_install_isr_service(int flags) { (void)flags; return ESP_OK; }
 static inline esp_err_t gpio_remove_isr_service(void) { return ESP_OK; }
