@@ -16,6 +16,10 @@ tools/host_check/check.sh        # gcc -fsyntax-only по заглушкам too
 ```
 Все 15 .c файлов компонентов+main проходят проверку (zero warnings при -Wall -Wextra).
 
+## Документация
+
+- [docs/HARDWARE_DESIGN.md](docs/HARDWARE_DESIGN.md) — проектирование принципиальной платы v1: требования, изоляция, pin-map (синхронно с `hal_board.h`), силовая часть (phase-angle + реле), сенсорный тракт (энкодер/концевые/CT/батарея/NTC), UPS, EMC, BOM, bring-up checklist, открытые вопросы до layout.
+
 ## Структура (компоненты = этапы плана)
 | Компонент | Назначение | Готовность |
 |---|---|---|
