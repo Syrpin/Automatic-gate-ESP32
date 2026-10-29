@@ -2,3 +2,13 @@ __pycache__/
 *.pyc
 build/
 sdkconfig.old
+
+# secrets - never commit
+.git-token
+*.token
+*.key
+*.pem
+.env
+.env.*
+credentials
+.git-credentials
