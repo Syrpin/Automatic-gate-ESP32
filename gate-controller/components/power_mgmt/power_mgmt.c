@@ -22,7 +22,7 @@ static const char *TAG="pwr";
 #define MAINS_ZC_GAP_MS 35
 #define BATT_LOW_PCT    10   /* graceful degradation threshold (step 5) */
 
-#define BATT_DIVIDER 2.0f
+#define BATT_DIVIDER 5.7f   /* HARDWARE_DESIGN rev E §13.2: 47k/10k divider */
 static adc_oneshot_unit_handle_t uh;
 static volatile bool mains_ok=true, mains_pending_down;
 static uint32_t mains_change_ms;
