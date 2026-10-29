@@ -34,3 +34,7 @@ void motor_drv_update(const TickPeriod_t *tp);
 
 /* Fault injection points for self-test (Phase E): */
 bool motor_drv_relay_health(uint8_t *mask_out); /* K1,K2,K3 expected-vs-current */
+
+/* Mains supervision, task-safe reads of ISR-owned state: */
+uint16_t motor_drv_mains_half_ms(void);  /* measured half-period, ms (6..12)   */
+int64_t  motor_drv_last_zc_us(void);     /* esp_timer us of last zero-cross    */

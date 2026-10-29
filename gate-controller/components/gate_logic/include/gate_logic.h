@@ -13,6 +13,7 @@ typedef enum {
     GS_IDLE_CLOSED, GS_IDLE_OPEN, GS_IDLE_MID,   /* trusted position classes  */
     GS_MOVING_OPEN, GS_MOVING_CLOSE,
     GS_PINCH_REVERSE,                            /* anti-pinch pause+reverse   */
+    GS_RETRY_START,                              /* deferred cmd after drv reject */
     GS_CALIBRATING,                              /* wizard-driven slow search  */
     GS_FAULT,                                    /* latched until user reset   */
 } gate_state_t;

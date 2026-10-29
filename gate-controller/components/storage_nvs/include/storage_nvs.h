@@ -30,6 +30,11 @@ typedef struct {
     encoder_type_t enc_type;
     bool     pinch_detect_en;
     bool     ir_illum_policy_off;/* keep IR disabled until night decision   */
+    /* CT calibration (wizard, Phase E): amps per ADC-LSB of the centered
+       window. 0 => "not calibrated": overcurrent/pinch/no-current protections
+       stay INACTIVE by design (fail-safe: uncalibrated gain must never trip
+       or mask protection silently — current_sense logs a warning once). */
+    float    ct_gain_a_per_lsb;
 } gate_config_t;
 
 esp_err_t storage_nvs_init(void);

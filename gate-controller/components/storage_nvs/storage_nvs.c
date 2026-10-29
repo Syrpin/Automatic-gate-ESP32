@@ -43,9 +43,14 @@ esp_err_t storage_nvs_init(void)
 
     nvs_handle_t h;
     if (nvs_open(NS, NVS_READONLY, &h) == ESP_OK) {
-        size_t sz = sizeof s_cfg;
-        if (nvs_get_blob(h, "gate", &s_cfg, &sz) == ESP_OK && !validate(&s_cfg)) {
+        gate_config_t tmp = s_cfg; /* start from conservative defaults */
+        size_t sz = sizeof tmp;
+        if (nvs_get_blob(h, "gate", &tmp, &sz) != ESP_OK) {
+            ESP_LOGW(TAG, "no stored config -> defaults");
+        } else if (!validate(&tmp)) {
             ESP_LOGE(TAG, "stored config invalid -> defaults");
+        } else {
+            s_cfg = tmp; /* valid blob wins */
         }
         nvs_close(h);
     }

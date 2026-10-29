@@ -8,13 +8,19 @@ static const char *TAG="btn";
 #define LONGPRESS_MS 800
 #define DBNC_MS      50
 
-typedef struct { int pin; uint32_t down_ms; bool stable,last; uint8_t hist; } bstate_t;
+typedef struct { int pin; uint32_t down_ms; bool stable,last,long_fired; uint8_t hist; } bstate_t;
 static bstate_t B[3]={ {PIN_BTN_OPEN},{PIN_BTN_STOP},{PIN_BTN_CLOSE} };
 static btn_event_t Q[4]; static uint8_t qh,qt;
 
 static void push(btn_event_t e){ if(e&&((qt+1)&3)!=qh){Q[qt]=e;qt=(qt+1)&3;} }
 
-esp_err_t buttons_init(void){ return ESP_OK; }
+esp_err_t buttons_init(void){
+    uint64_t mask = GPIO_SEL(PIN_BTN_OPEN)|GPIO_SEL(PIN_BTN_STOP)|GPIO_SEL(PIN_BTN_CLOSE);
+    gpio_config_t gc={ .pin_bit_mask=mask, .mode=GPIO_MODE_INPUT,
+                       .pull_up_en=GPIO_PULLUP_ENABLE, .pull_down_en=GPIO_PULLDOWN_DISABLE,
+                       .intr_type=GPIO_INTR_DISABLE };
+    return gpio_config(&gc);
+}
 
 static btn_event_t classify(uint8_t idx,bool pressed,uint32_t held_ms){
     if(!pressed){ /* release: emit short if it was a quick tap */
@@ -30,11 +36,17 @@ void buttons_sample(const TickPeriod_t *tp){
         B[i].hist=(B[i].hist<<1)|(raw&1);
         bool stbl = (B[i].hist&7)==7 ? true : (B[i].hist&7)==0 ? false : B[i].stable;
         if(stbl!=B[i].last){
-            if(stbl) B[i].down_ms=tp->now_ms;
+            if(stbl){ B[i].down_ms=tp->now_ms; B[i].long_fired=false; }
             else { uint32_t held=tp->now_ms-B[i].down_ms;
-                   if(held<LONGPRESS_MS) push(classify(i,true,held)); }
+                   if(!B[i].long_fired && held<LONGPRESS_MS) push(classify(i,true,held)); }
             B[i].last=stbl;
-        } else if(stbl){ push(classify(i,true,tp->now_ms-B[i].down_ms)); }
+        } else if(stbl){
+            /* long press fires exactly once per hold, not every tick */
+            if(!B[i].long_fired && (tp->now_ms-B[i].down_ms)>=LONGPRESS_MS){
+                push(classify(i,true,LONGPRESS_MS));
+                B[i].long_fired=true;
+            }
+        }
         B[i].stable=stbl;
     }
 }

@@ -19,3 +19,5 @@ bool   power_charge_inhibited(void);     /* T<batt min -> hardware+soft block */
 uint8_t power_battery_pct(void);         /* crude OCV curve, wizard refines   */
 void   power_urgent_save_and_notify(void);/* called from ZC-loss ISR context via queue */
 void   power_mgmt_heartbeat(void);       /* WDT feed + periodic sampling      */
+void   power_mains_watchdog(void);      /* ZC-gap check, call from ctrl tick  */
+float  power_batt_temp_c(void);         /* NTC reading for telemetry          */

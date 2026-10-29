@@ -16,6 +16,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_timer.h"
+#include "esp_task_wdt.h"
 
 #include "hal_board.h"
 #include "storage_nvs.h"
@@ -23,24 +24,43 @@
 #include "encoder.h"
 #include "limit_sw.h"
 #include "buttons.h"
+#include "beep.h"
 #include "current_sense.h"
 #include "gate_logic.h"
 #include "power_mgmt.h"
 #include "events_log.h"
+#include "notify_tg.h"
 
 static const char *TAG = "main";
 
 #define CTRL_PERIOD_MS   10
 #define BEEP_PERIOD_MS   50
 #define TELEMETRY_MS     1000
+/* Task WDT: ctrl must finish its 10 ms budget with margin; if the state
+   machine stalls (driver deadlock), reset is safer than a frozen gate. */
+#define CTRL_WDT_TIMEOUT_MS  200
 
 static void ctrl_task(void *arg)
 {
     TickPeriod_t tp;
     tp.period_ms = CTRL_PERIOD_MS;
+
+    /* WDT: subscribe AFTER registration of the timeout config; a stalled
+       ctrl loop means a driver deadlock -> panic+reset (sdkconfig wdt). */
+    esp_task_wdt_config_t wcfg = {
+        .timeout_ms = CTRL_WDT_TIMEOUT_MS,
+        .idle_core_mask = 0,          /* don't watch idle tasks here */
+        .trigger_panic = true,
+    };
+    /* re-init is harmless if already initialised by app startup */
+    (void)esp_task_wdt_init(&wcfg);
+    esp_task_wdt_add(NULL);
+
     for (;;) {
         uint32_t t0 = esp_timer_get_time() / 1000;
         tp.now_ms = t0;
+
+        esp_task_wdt_reset();
 
         buttons_sample(&tp);      /* debounce FSM, no blocking */
         limit_sw_scan(&tp);       /* de-bounce + edge events */
@@ -83,6 +103,9 @@ static void telemetry_task(void *arg)
 void app_main(void)
 {
     ESP_ERROR_CHECK(hal_board_init());      /* clocks, GPIO defaults safe-state */
+    /* One shared GPIO ISR service for encoder (quadrature) + motor_drv (ZC).
+       Must be installed BEFORE any gpio_isr_handler_add() call. */
+    ESP_ERROR_CHECK(hal_board_isr_service_install());
     ESP_ERROR_CHECK(storage_nvs_init());    /* config + persisted position */
     events_log_init();                      /* ring buffer + journal loader */
 
@@ -90,10 +113,16 @@ void app_main(void)
     ESP_ERROR_CHECK(encoder_init());        /* PCNT channel per profile (optical/DX/DI) */
     ESP_ERROR_CHECK(limit_sw_init());
     ESP_ERROR_CHECK(buttons_init());
+    ESP_ERROR_CHECK(beep_init());           /* LEDC tone engine (non-blocking patterns) */
     ESP_ERROR_CHECK(current_sense_init());  /* ADC1 + DMA, zero-cross reference */
     ESP_ERROR_CHECK(power_mgmt_init());     /* mains detect, UPS budget, graceful save */
 
     ESP_ERROR_CHECK(gate_logic_init());     /* restores position, re-validates limits */
+
+    /* Telegram notifications: queue-backed, never blocks ctrl_task; Wi-Fi
+       bring-up happens inside notify_tg (Phase C stub until then). */
+    if (notify_tg_init() != ESP_OK)
+        ESP_LOGW(TAG, "notify_tg init deferred (no network yet)");
 
     /* Phase C stub: camera_pipeline_init()/vision_core wired in next stage. */
 

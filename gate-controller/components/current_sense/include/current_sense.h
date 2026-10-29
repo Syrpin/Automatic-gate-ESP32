@@ -16,3 +16,6 @@ void      current_sense_sample(const TickPeriod_t *tp); /* DMA-fed, non-blocking
 float     current_rms(void);
 bool      current_over_run(uint32_t hold_ms);   /* sustained above i_rms_run_max */
 bool      current_over_inrush(void);            /* above i_rms_peak_max ever      */
+/* Calibration hook (wizard, Phase E): amps-per-LSB of the centered window.
+   Until set >0, overcurrent protections stay inactive (fail-safe, logged). */
+void      current_sense_set_gain(float amps_per_lsb);

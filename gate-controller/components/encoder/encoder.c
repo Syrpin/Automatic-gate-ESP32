@@ -22,38 +22,54 @@ static const char *TAG = "enc";
 #define STALE_LIMIT_MS 1500
 
 static struct {
-    int32_t pos;              /* accumulated counts                         */
-    volatile int32_t raw_delta;/* drained from ISR each tick                 */
+    volatile int32_t pos;        /* accumulated counts (task-owned, but read
+                                    from telemetry/ISR contexts -> volatile)  */
+    volatile int32_t raw_delta;  /* drained from ISR each tick                */
     uint32_t last_change_ms;
     enc_status_t status;
     float    speed_cps;
-    uint32_t prev_pos;
-    pcnt_unit_handle_t unit;  /* custom-PCNT path only                      */
+    int32_t  prev_pos;
+    pcnt_unit_handle_t unit;     /* custom-PCNT path only                     */
 } e;
 
 /* ---------- devkit GPIO-ISR decode (quadrature subset) -------------------- */
-static int8_t s_prev_ab = 3;
+static volatile int8_t s_prev_ab = 3;   /* ISR-owned state: keep in IRAM-safe
+                                           plain volatile byte               */
 static const int8_t SEQ[16] = {0,-1,+1,0, +1,0,0,-1, -1,0,0,+1, 0,+1,-1,0};
 
 IRAM_ATTR static void enc_isr(void *arg)
 {
+    (void)arg;
     int a = gpio_get_level(PIN_ENC_A);
     int b = gpio_get_level(PIN_ENC_B);
     int8_t ab = (a << 1) | b;
-    if (s_prev_ab != 3) e.raw_delta += SEQ[((s_prev_ab << 2) | ab) & 0xF];
+    int8_t prev = s_prev_ab;
+    if (prev != 3) {
+        int8_t d = SEQ[((prev << 2) | ab) & 0xF];
+        if (d) {
+            /* saturating delta so a stalled ISR drain can never wrap int32 */
+            int32_t cur = e.raw_delta;
+            if (d > 0 ? cur < INT32_MAX : cur > INT32_MIN) e.raw_delta = cur + d;
+        }
+    }
     s_prev_ab = ab;
 }
 
 esp_err_t encoder_init(void)
 {
     memset(&e, 0, sizeof e);
+    s_prev_ab = 3;
     e.status = ENC_OK;
     const hal_board_profile_t *p = hal_board_profile();
     if (p->enc_use_gpio_isr) {
         gpio_config_t gc = { .pin_bit_mask = (1ULL<<PIN_ENC_A)|(1ULL<<PIN_ENC_B),
                              .mode = GPIO_MODE_INPUT, .pull_up_en = 1 };
         ESP_RETURN_ON_ERROR(gpio_config(&gc), TAG, "enc pins");
-        gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
+        /* ISR service is installed once for the whole system; motor_drv's ZC
+           handler attaches to the same service (README TODO #1 resolved). */
+        esp_err_t ir = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
+        if (ir != ESP_OK && ir != ESP_ERR_INVALID_STATE)
+            ESP_RETURN_ON_ERROR(ir, TAG, "isr service");
         gpio_set_intr_type(PIN_ENC_A, GPIO_INTR_ANYEDGE);
         gpio_set_intr_type(PIN_ENC_B, GPIO_INTR_ANYEDGE);
         gpio_isr_handler_add(PIN_ENC_A, enc_isr, NULL);
@@ -86,8 +102,8 @@ void encoder_update(const TickPeriod_t *tp)
     }
     /* speed: EMA over ticks */
     uint32_t dt = tp->period_ms;
-    int32_t dp = e.pos - (int32_t)e.prev_pos;
-    e.prev_pos = (uint32_t)e.pos;
+    int32_t dp = e.pos - e.prev_pos;
+    e.prev_pos = e.pos;
     if (dt) e.speed_cps = 0.7f * e.speed_cps + 0.3f * (dp * 1000 / (float)dt);
 }
 
@@ -96,8 +112,14 @@ enc_status_t encoder_status(void) { return e.status; }
 uint32_t encoder_last_change_ms(void) { return e.last_change_ms; }
 float encoder_speed_counts_per_s(void) { return e.speed_cps; }
 
-void encoder_set_origin_closed(void) { e.pos = 0; e.last_change_ms = esp_timer_get_time()/1000; }
-void encoder_set_origin_open(void)   { e.pos = storage_cfg()->travel_counts; }
+void encoder_set_origin_closed(void) { taskENTER_CRITICAL(&s_mux);
+    e.pos = 0; e.raw_delta = 0; e.prev_pos = 0;
+    taskEXIT_CRITICAL(&s_mux);
+    e.last_change_ms = (uint32_t)(esp_timer_get_time()/1000); }
+void encoder_set_origin_open(void)   { taskENTER_CRITICAL(&s_mux);
+    e.pos = storage_cfg()->travel_counts; e.raw_delta = 0; e.prev_pos = e.pos;
+    taskEXIT_CRITICAL(&s_mux);
+    e.last_change_ms = (uint32_t)(esp_timer_get_time()/1000); }
 
 bool encoder_dir_matches(gate_dir_t cmd, uint32_t window_ms)
 {
@@ -109,5 +131,6 @@ bool encoder_dir_matches(gate_dir_t cmd, uint32_t window_ms)
     return false; /* stale while moving => sensor fault */
 }
 
-void encoder_set_position_raw(int32_t p){ taskENTER_CRITICAL(&s_mux); e.pos=p; e.raw_delta=0; taskEXIT_CRITICAL(&s_mux);
+void encoder_set_position_raw(int32_t p){ taskENTER_CRITICAL(&s_mux); e.pos=p; e.raw_delta=0; e.prev_pos=p;
+    taskEXIT_CRITICAL(&s_mux);
     e.last_change_ms=(uint32_t)(esp_timer_get_time()/1000); e.status=ENC_OK; }
