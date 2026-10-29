@@ -1,12 +1,28 @@
 # Принципиальная плата Gate Controller v1 (ESP32-S3) — документация по проектированию
 
-**Статус:** проект предварительный (rev A). Назначение документа — исходные данные для
-схемы и платы в KiCad/Altium. Код прошивки (`components/*`, pin-map в
-`components/hal_board/include/hal_board.h`) является источником истины по номерам GPIO;
-любое расхождение схемы с `hal_board.h` считается ошибкой схемы.
+**Статус:** rev B — переработан по итогам ревью rev A (2026-10-29, 19 P0 / 17 P1 / 9 P2;
+все P0/P1 закрыты или вынесены в §0 как open decisions уровня архитектуры).
+Назначение документа — исходные данные для схемы и платы в KiCad/Altium. Код прошивки
+(`components/*`, pin-map в `components/hal_board/include/hal_board.h`) является источником
+истины по номерам GPIO; любое расхождение схемы с `hal_board.h` считается ошибкой схемы.
 
 Связанные разделы плана: p.11.1 (pin map), p.13 (политика IR/ночи), Phase B (аналог),
 Phase E (калибровочный wizard).
+
+---
+
+## 0. Решения, обязательные до начала layout (open decisions)
+
+Эти пункты меняют состав узлов и топологию платы — layout без них начинать нельзя.
+
+| # | Вопрос | Варианты | Влияние | Статус |
+|---|---|---|---|---|
+| D1 | **Аварийное закрытие при пропадании сети** (§1, P0-7) | AC-двигатель несовместим с UPS-закрытие (двигатель питается от сети). a) принять «створка остаётся на месте»; b) DC-актуатор 12 В (отказ от phase-angle, вся §4 меняется); c) пружинный возврат + fail-open замок | радикально меняет силовую часть | **ОЖИДАЕТ ЗАКАЗЧИКА.** В rev B принято скромное (a): UPS держит только логику |
+| D2 | **Одна плата или две** (§2/§6, P0-16) | a) одна PCB 100×80 мм с изоляционным пропилом 6 мм; b) две платы (силовая + логическая) с межплатным разъёмом | площадь, жгут, сертификация, цена | **РЕКОМЕНДУЕТСЯ (a)** — ниже стоимость, один hi-pot контур |
+| D3 | **Антенна** (P0-17) | WROOM-1 (PCB-антенна) ИЛИ WROOM-1U (IPEX/u.FL) — это РАЗНЫЕ модули, footprint один | RF performance в IP66 корпусе | **РЕКОМЕНДУЕТСЯ -1U + выносная антенна** (металл/козырёк экранирует) |
+| D4 | **Камера + PSRAM** (P0-10) | N16R8 (octal PSRAM) занимает GPIO33–37 → камера туда не встанет. a) tflite сейчас → модуль N16R8, камера на отдельный MCU; b) камера сейчас → N16R2 (quad PSRAM) или N8R2; c) ни того ни другого → N16R0 | выбор модуля U1 | **В rev B принято (c)-без-камеры**: базовая плата = control-only, N16R8 под PSRAM; камера — отдельный spin (см. §7) |
+| D5 | **Заряд АКБ платой или внешним ЗУ** (P0-8) | a) внешний буферный ЗУ (рекомендуется); b) on-board CC/CV + NTC-компенсация | состав §4.5, BOM | **В rev B принято (a)**, см. §4.5 |
+| D6 | **Форм-фактор** | габариты, крепёж, высота компонентов, ориентация разъёмов | mechanical | ОЖИДАЕТ (целесообразно 100×80×25 мм внутри IP66 бокса) |
 
 ---
 
@@ -15,41 +31,44 @@ Phase E (калибровочный wizard).
 | Параметр | Значение | Комментарий |
 |---|---|---|
 | Питание силовое | 230 VAC ±15 %, 50 Гц | фазово-угловое (phase-angle) управление однофазным асинхронным двигателем приворота |
-| Двигатель | до 700 Вт номинал, пусковой ток до 6×Iном (~18 A пик) | выбрать реле/симистор с запасом ×3 по току |
+| Двигатель | до 700 Вт номинал (~3 А), пусковой ток до 6×Iном (~18 A пик, ~100 мс) | выбрать реле/симистор с запасом ×3 по току |
 | Логическое питание | 3.3 В, ≤ 600 мА | Wi-Fi bursts ~350 мA пик |
-| Дежурное питание / UPS | буфер 12 В АКБ 1.2–7 А·ч через DC/DC | удержание логики + аварийное закрытие створки при пропадании сети (бюджет <10 мс на обнаружение mains-lost) |
-| MCU | ESP32-S3-WROOM-1-N16R8 (16 МБ flash, 8 МБ octal PSRAM) | PSRAM нужна для later-этапа tflite; octal PSRAM занимает GPIO33–37 — они запрещены к использованию |
-| Рабочая температура | −30 … +60 °C (улица, козырёк) | NTC-интерлок батареи ограничивает заряд при T<0 °C и T>45 °C |
-| Защита | IP66 корпус, отдельная силовая камера | все сетевые цепи — только в силовой камере |
-| Безопасность | гальваническая изоляция сети от логики ≥ 3 кВ RMS | усиленная изоляция (reinforced), creepage ≥ 6.4 мм между первичной/вторичной сторонами |
+| Дежурное питание / UPS | буфер 12 В АКБ 1.2–7 А·ч через ideal-diode OR-ing | удержание **только логики**; аварийное закрытие створки от АКБ **невозможно** при AC-двигателе (см. D1). Обнаружение mains-lost: бюджет ≤ 30 мс (см. §4.4) |
+| MCU | ESP32-S3-WROOM-1-N16R8 (16 МБ flash, 8 МБ octal PSRAM) | PSRAM нужна для later-этапа tflite; octal PSRAM занимает GPIO33–37 — они запрещены к использованию (и несовместимы с камерой, см. D4) |
+| Рабочая температура | −30 … +60 °C (улица, козырёк) | все компоненты выбирать по автоному диапазону −40…+85 °C; NTC-контроль температуры АКБ (заряд внешним ЗУ — см. D5) |
+| Защита | IP66 корпус, силовые цепи в отдельной камере/зоне | все сетевые цепи — только в силовой зоне |
+| Безопасность | гальваническая изоляция сети от логики ≥ 3 кВ RMS | усиленная изоляция (reinforced), creepage ≥ 6.4 мм между первичной/вторичной сторонами; барьер формируют PSU + оптроны + reinforced-реле (см. P0-14 в §4.3) |
 
 ### 1.1 Нормативка
-- EN 60335-1 / EN 60335-2-103 (приворота): обязательное аппаратное отключение, ограничение усилия (anti-pinch ≤ заданного порога), концевые выключатели как независимый канал безопасности.
-- IEC 61000-4-x: EFT 2 кВ на сетевой порт, surge 1 кВ L-L / 2 кВ L-PE, CS 30 А/м на силовые входы.
-- UL/CE подготовка: Y2-конденсаторы между первичной и вторичной землями, X2 на входе, varistor MOV 275 VAC.
+- EN 60335-1 / EN 60335-2-103 (привороты): обязательное аппаратное отключение, ограничение усилия (anti-pinch ≤ заданного порога), концевые выключатели как независимый канал безопасности.
+- IEC 61000-4-x: EFT 2 кВ на сетевой порт, surge 1 кВ L-L / 2 кВ L-PE, **IEC 61000-4-6 CS 3 В (conducted, 150 кГц–80 МГц)** на силовые входы; **IEC 61000-4-8 магнитное поле 30 А/м** (power frequency).
+- UL/CE подготовка: **Y1 (или 2×Y2 последовательно)** между первичной и вторичной землями — одиночный Y2 даёт только basic/supplementary; X2 на входе; MOV с рабочим напряжением ≥ 300 VAC (см. §4.1).
 
 ---
 
 ## 2. Архитектура платы (блок-схема)
 
 ```
-230VAC ──[FUSE 5A T]──[MOV+X2]──┬────── AC-DC (HLK-PM12, isolated) ──[12V rail]──[ideal diode OR-ing with 12V battery]──[Buck 3.3V TPS563201]
-                                 │                                                        │
-                                 ├──[divider → H11AA1 opto]── GPIO14 (ZC + mains-loss)   LOGIC GND (isolated secondary)
-                                 │
-                                 ├──[K1/K2 direction relays]──┐
-                                 ├──[K3 shunt relay]          ├─ TRIAC BTA16 + snubber ── MOTOR (L/N + PE)
-                                 │                            │
-                            [MOC3041 opto-triac driver]── GPIO10 PWM (LEDC/MCPWM0A)
-                                 │
+230VAC ──[FUSE T5A]──[MOV 300VAC + X2 + bleed 1M]──┬── AC-DC (HLK-10M12, isolated 3kV) ──[12V rail]──[ideal diode LTC4412+PFET OR-ing with 12V battery]──[Buck 3.3V TPS563201]
+                                                    │                                                            │
+                                                    ├──[2×68k divider → H11AA1 opto]── GPIO14 (ZC + mains-loss)  LOGIC GND (isolated secondary)
+                                                    │
+                                                    ├──[K1/K2 direction relays (REINFORCED)]──┐
+                                                    ├──[K3 shunt relay]                       ├─ TRIAC BTA16-800B + snubber ── MOTOR (L/N + PE)
+                                                    │                                         │
+                                       [MOC3023 random-phase opto driver, R_LED 220Ω]── GPIO10 PWM (LEDC/MCPWM0A)
+                                                    │
 LOGIC SIDE (3.3V): ESP32-S3 — encoder GPIO15/16, limits GPIO17/18 (NC), buttons GPIO4/5/6,
-beep GPIO7, LED GPIO38, CT GPIO1 (ADC1_CH0), battery GPIO2 (ADC1_CH1), NTC GPIO8 (ADC1_CH6),
-RTC/I2C GPIO9/40, UART0 43/44, USB-C on 19/20, camera DVP (см. §7, отдельный build variant).
+beep GPIO7, LED GPIO38, CT GPIO1 (ADC1_CH0), battery GPIO2 (ADC1_CH1), NTC GPIO8 (ADC1_CH7),
+RTC/I2C GPIO9/40, UART0 43/44, USB-C on 19/20. Камера — отдельный spin (§7, см. D4).
 ```
 
-Два гальванических острова: **MAINSIDE** (силовая камера) и **LOGIC** (логическая плата).
-Связь через оптроны (управление симистора, ZC-детекция). Общая точка — только защитное
-заземление PE. Вторичка HLK-PM12 и логическая земля соединены через точку STAR-GND buck.
+Одна PCB (решение D2-a) с двумя гальваническими зонами: **MAINSIDE** (силовая область,
+левый край) и **LOGIC**. Связь — только через оптроны (управление симистора, ZC-детекция)
+и reinforced-реле (их катушки питаются от 12 В вторички, т.е. с LOGIC-стороны барьера).
+Общая точка — только защитное заземление PE. Вторичка HLK-10M12 и логическая земля
+соединены через точку STAR-GND buck. Заряд АКБ — внешним ЗУ (D5-a), на плате только
+разрядный ideal-diode путь.
 
 ---
 
@@ -61,36 +80,39 @@ RTC/I2C GPIO9/40, UART0 43/44, USB-C on 19/20, camera DVP (см. §7, отдел
 ### 3.1 Цифровые, сеть/актуаторы
 | GPIO | Сеть | Роль | Тип | Примечание |
 |---|---|---|---|---|
-| 10 | MAINS | PIN_TRIAC_PWM | out, LEDC/MCPWM0A | 20 кГц, R 1 кОм → LED оптрона; pull-down 100 кОм на triac gate (fail-off) |
-| 11 | LOGIC | PIN_RELAY_OPEN (K1) | out, Q1 2N7002 | coil 12 В, диод SS54антипараллельно |
-| 12 | LOGIC | PIN_RELAY_CLOSE (K2) | out, Q2 | dead-time 60 мс в софте; аппаратно K1/K2 взаимоблокировка NC-допами контактов |
+| 10 | **LOGIC** | PIN_TRIAC_PWM | out, LEDC/MCPWM0A | 20 кГц; R 220 Ом → LED оптрона MOC3023 (~9.5 мА); к MAINSIDE относится только выход оптрона, дорожка GPIO10 не пересекает барьер; pull-down 100 кОм на gate симистора (fail-off) |
+| 11 | LOGIC | PIN_RELAY_OPEN (K1) | out, Q1 2N7002 | coil от 12 В, диод SS54 антипараллельно катушке |
+| 12 | LOGIC | PIN_RELAY_CLOSE (K2) | out, Q2 | dead-time 60 мс в софте; аппаратная взаимоблокировка — комплементарные драйверы Q1'/Q2' (см. §4.3), НЕ контактами G5NB |
 | 13 | LOGIC | PIN_RELAY_SHUNT (K3) | out, Q3 | шунт triac на полном ходу; включать только в zero-current окне (fw policy) |
-| 14 | MAINS→LOGIC | PIN_MAINS_DETECT | in, NEGEDGE ISR | open-collector выход H11AA1, pull-up 10 кОм к 3.3 В |
+| 14 | MAINS→LOGIC | PIN_MAINS_DETECT | in, NEGEDGE ISR | open-collector выход H11AA1, pull-up 10 кОм к 3.3 В (пересечение барьера — только фотодиодом оптрона) |
 
 ### 3.2 Датчики
 | GPIO | Роль | Тип | Примечание |
 |---|---|---|---|
-| 15 | ENC_A | in, GPIO-ISR (PCNT0 sig0 на custom) | RC 1 кОм/10 нФ + Schmitt 74LVC1G14; pull-up 10 кОм (датчик OC) |
+| 15 | ENC_A | in, GPIO-ISR (PCNT0 sig0 на custom) | RC 100 Ом/1 нФ + Schmitt 74LVC1G14 (пороги Vt+ ≈1.7 В / Vt− ≈1.3 В при 3.3 В); pull-up 4.7 кОм к 3.3 В (датчик OC); TVS на линию (§6) |
 | 16 | ENC_B | in, PCNT0 sig1 | тоже |
-| 17 | LIMIT_CLOSED | in | NC-контакт, active-low; фильтр 1 кОм/100 нФ; debounce 10 мс в limit_sw.c |
-| 18 | LIMIT_OPEN | in | аналогично; ОБА разомкнуты одновременно = обрыв провода (wire-break detect) |
+| 17 | LIMIT_CLOSED | in | NC-контакт: **норма = LOW** (конт замкнут на GND через датчик), обрыв/срабатывание = HIGH; фильтр 100 Ом/100 нФ; debounce 10 мс в limit_sw.c |
+| 18 | LIMIT_OPEN | in | аналогично; ОБА HIGH одновременно при движении = обрыв общего провода (wire-break detect, отказ → STOP) |
 | 21 | PROBE_OBSTACLE | in, опционально | механическая полоса; конфликтует с CAM_VSYNC в cam-build — per-build jumper |
 
 ### 3.3 UI
 | GPIO | Роль | Примечание |
 |---|---|---|
-| 4 | BTN_OPEN | RTC-capable, ext1 wake; internal pull-up включён в buttons.c |
+| 4 | BTN_OPEN | RTC-capable, ext1 wake; internal pull-up включён в buttons.c; внешний 10 кОм + 100 нФ |
 | 5 | BTN_STOP | RTC-capable |
 | 6 | BTN_CLOSE | RTC-capable |
-| 7 | BEEP | passive buzzer 3.3 В через NMOS SS8050, LEDC ch; Шоттки на катушку зуммера |
+| 7 | BEEP | passive buzzer 12 В через NMOS 2N7002 (drain к буззеру, source GND), LEDC ch; Шоттки SS54 параллельно пьезо-головке — только если магнитный буззер с катушкой |
 | 38 | STATUS_LED | plain LED + 1 кОм; в cam-build разделяется с IR_ILLUM (перемычка JP_LED/JP_IR) |
 
 ### 3.4 Аналог (ADC1 только! ADC2 конфликтует с Wi-Fi)
 | GPIO | Канал | Сигнал | Фронтенд |
 |---|---|---|---|
-| 1 | ADC1_CH0 | CT clamp RMS | SCT-024-009 + burden → AD8237 iso-instr amp → bias 1.65 В (REF3033) → LPF 1 кГц → TVS clamp |
-| 2 | ADC1_CH1 | Battery voltage | делитель (см. §5.4 — ревизия ratio!), LPF 100 нФ |
-| 8 | ADC1_CH6 | NTC battery temp | 10 кОм NTC B=3950 + 10 кОм upper, LPF 100 нФ |
+| 1 | ADC1_CH0 | CT clamp RMS | SCT-024-009 + burden → AD8237 iso-instr amp → bias mid-rail (§5.3) → LPF 1 кГц → TVS clamp |
+| 2 | ADC1_CH1 | Battery voltage | делитель 47k/10k → ratio 5.7 (§5.4), LPF 100 нФ |
+| 8 | **ADC1_CH7** | NTC battery temp | 10 кОм NTC B=3950 + 10 кОм upper, LPF 100 нФ |
+
+*(rev A содержал ошибку: GPIO8 = ADC1_CH7, а не CH6; ADC1_CH6 = GPIO7, занят зуммером.
+Проверено по `soc/esp32s3/adc_channel.h`.)*
 
 ### 3.5 Прочее
 | GPIO | Роль | Примечание |
@@ -101,67 +123,74 @@ RTC/I2C GPIO9/40, UART0 43/44, USB-C on 19/20, camera DVP (см. §7, отдел
 | 45, 46 | strapping VDD_SPI / RF_SW | не использовать как outputs |
 | 19, 20 | USB-Serial-JTAG D+/D− | USB-C provisioning/console; ESD USBLC6-2SC6 |
 | 26–32 | SPI flash | NEVER ROUTE |
-| 33–37 | octal PSRAM | NEVER ROUTE (N16R8) |
+| 33–37 | octal PSRAM | NEVER ROUTE (N16R8) — и это делает камеру на этом модуле невозможной (D4) |
+| 39–42 | JTAG-пины | свободны в control-build; при использовании в cam-build отладка по JTAG теряется |
 | 47, 48 | свободны в control-build | CAM_D1/D0 в cam-build |
+| 2, 3 (extra pads) | резерв | test points TP_ADC_x — для bring-up |
 
 ---
 
 ## 4. Силовая часть (MAINSIDE)
 
 ### 4.1 Входная защита и EMC
-- **F1**: предохранитель 5 A / 250 V time-launch (T5A), разборный держатель.
-- **RV1**: MOV 14D471K (275 VAC, Imax 6 кА) L-N.
-- **CX1**: X2 0.47 мкФ / 310 VAC.
-- **LF1**: синфазный дроссель 10 мГн + CY1/CY2 Y2 2.2 нФ (после дросселя к PE).
+- **F1**: предохранитель 5 A / 250 V time-lag (T5A), разборный держатель. Проверить I²t против пускового импульса мотора (~18 А × 100 мс, I²t ≈ 32 А²с; T5A ceramic I²t melt ≈ 75 А²с — запас есть, но сверить с даташитом выбранного производителя; при сомнении T6.3A).
+- **RV1**: MOV **14D471K** — рабочее напряжение **300 VAC** (не 275!), Imax 6 кА, L-N. Запас по линии 264 В (+15 %) выполнен.
+- **CX1**: X2 0.47 мкФ / 310 VAC + **R bleed 1 МОм / 0.5 Вт параллельно** (остаточный заряд после отключения вилки — требование IEC 60335: ≤ 60 В через 5 с).
+- **LF1**: синфазный дроссель 10 мГн + CY1/CY2 **Y1 2.2 нФ** (или 2×Y2 последовательно) после дросселя к PE.
 - Всё после F1.
 
 ### 4.2 Фазирующий регулятор (phase-angle)
-- **TR1**: симистор **BTA16-600BW** (16 A, 600 В, dV/dt ≥ 50 V/µs), TO-220 на изолированной колодке, радиатор RθA ≤ 4 К/Вт (~1.8 Вт при 3 A RMS; запас по пусковому току обязателен).
-- **Snubber**: 33 Ом / 0.22 мкФ X2-class параллельно MT1–MT2 — гасит dV/dt индуктивной нагрузки. Проверить нагрев резистора на пуске.
-- **Драйвер**: MOC3041 (random-phase, БЕЗ zero-cross внутри) + DIAC DB3 + R gate 36 Ом. Zero-cross-opto (MOC3023) НЕ годится — нужен произвольный угол.
-- **PWM-вход**: GPIO10 → R 1 кОм → LED оптрона; pull-down 10 кОм (MCU reset = triac off). Частота LEDC 20 кГц, duty = угол зажигания.
+- **TR1**: симистор **BTA16-800BW** (16 A, 800 В, **snubberless / high dV/dt**, TO-220 на изолированной колодке). Радиатор RθA ≤ 4 К/Вт: потери при 3 А RMS = V_T(I)·I ≈ 1.25 В × 3 А ≈ **3.8 Вт** → подъём ~15–16 °C — запас до 60 °C ambient есть. Запас по пусковому току обязателен (I²t pulse).
+- **Snubber**: 33 Ом / 0.22 мкФ X2-class параллельно MT1–MT2 — гасит dV/dt индуктивной нагрузки и помогает по ЭМС. Непрерывные потери в RC на 50 Гц малы (<0.1 Вт), но проверить нагрев резистора на фазовом режиме (при малых углах ток через C выше).
+- **Драйвер**: **MOC3023** (random-phase, встроенного zero-cross детектора НЕТ, IFT ≤ 5 мА) — именно random-phase нужен для произвольного угла зажигания. DIAC DB3 **убран**: при оптронном драйвере он добавляет ~30 В порог и задержку; gate resistor 36–100 Ом достаточно. (Если макет покажет вялый фронт — вернуть DB3 как опцию.)
+- **PWM-вход**: GPIO10 → **R 220 Ом** → LED оптрона: I_F = (3.3 − 1.2)/220 ≈ **9.5 мА** ≥ IFT(MOC3023)=5 мА с запасом на деградацию LED и −30 °C; суммарная нагрузка GPIO10 < 40 мА. Pull-down 10 кОм на gate (MCU reset = triac off). Частота LEDC 20 кГц, duty = угол зажигания.
+- *(rev A ошибочно использовал MOC3041 — это zero-cross opto, фазовое управление с ним невозможно.)*
 
 ### 4.3 Реле направления K1/K2/K3
-- **Реле**: Omron G5NB-1A-E 12VDC (16 A contacts); для K3 — версия с золотыми контактами (риск залипания критичен).
-- **Mutual lock**: NC-допы K1 и K2 последовательно в катушки противоположного реле — аппаратный запрет одновременного включения.
-- **Drive**: 2N7002, R gate 1 кОм, pull-down 100 кОм (GPIO floating during reset = relay released),freewheel SS54.
-- **K3 shunt**: замыкается только при полностью открытом triac (full speed) — экономит ~1.5 Вт; fw включает его только в zero-current окне (motor_drv.c TODO hw bring-up).
+- **Реле**: **Omron G6K-2F-F 12VDC** (2 форм-контакта, reinforced-серия не у всех производителей — см. ниже) ИЛИ, предпочтительно, реле с усиленной изоляцией катушка↔контакты ≥ 4 кВ (например, Panasonic AY-A series / Songle SLB-1STF с documented reinforced). Обычные G5NB/G2RL имеют базовую изоляцию ~2 кВ и **не проходят hi-pot 3 кВ (§8.2)** — barьер через них закрыт. Номинал контактов: ≥ 10 А, AgSnO2 (индуктивная нагрузка).
+- **Mutual lock**: реализуется **на логике драйверов, а не контактами** (у однополюсных реле NC-допов нет): Q1 и Q2 через комплементарные инверторы 74LVC1G14 — затвор Q2 закрыт, пока GPIO11 активен, и наоборот. Программный dead-time 60 мс остаётся первым рубежом, аппаратный — вторым.
+- **Drive**: 2N7002, R gate 1 кОм, pull-down 100 кОм (GPIO floating during reset = relay released), freewheel SS54 антипараллельно катушке.
+- **K3 shunt**: замыкается только при полностью открытом triac (full speed) — экономит ~3.8 Вт; fw включает его только в zero-current окне (motor_drv.c TODO hw bring-up). Контакты K3 — обычные AgSnO2 ≥ 10 А (золото недопустимо на силовой коммутации); залипание детектируется схемно: tok через шунт + `motor_drv_relay_health()` в прошивке.
 
 ### 4.4 Zero-cross / mains-loss detection (GPIO14)
-Цепь: L → R divider 2×470 кОм/0.25 Вт → **H11AA1** (anti-parallel вход) → выход open-collector, pull-up 10 кОм к 3.3 В (LOGIC сторона).
+Цепь: L → **R divider 2×68 кОм/0.5 Вт (последовательно, ≥350 В каждый)** → H11AA1 (anti-parallel вход) → выход open-collector, pull-up 10 кОм к 3.3 В (LOGIC сторона).
+- Ток LED: 230 В / 136 кОм ≈ **1.7 мА** — при CTR(min) H11AA1 ≈ 20 % даёт Ic ≈ 0.34 мА → падение на pull-up ≈ 3.4 В, узел уверенно проваливается ниже VIL. (rev A: 2×470 кОм давал 0.245 мА — детектор не срабатывал вообще.)
 - Два импульса на период (±порог) — fw считает half-period (MAINS_ZC_GAP_MS=35 мс tolerance, power_mgmt.c).
-- Loss-of-mains: отсутствие фронта > 3×20 мс, debounce 15 мс (MAINS_LOST_DEBOUNCE_MS) → emergency path (бюджет <10 мс).
+- **Loss-of-mains: отсутствие фронта > 2×20 мс + debounce 15 мс ≈ бюджет 30–50 мс.** Требование «<10 мс» из rev A физически невыполнимо для ZC-детекции (один полупериод = 10 мс); переписано в §1. Для привода этого достаточно: за 30 мс створка не проходит опасного пути, а логику держит UPS. Если заказчику критично <10 мс — ставить второй быстрый детектор (выпрямлённое напряжение через компаратор), это отдельная позиция D1-зависимая.
 - Задержка propagation оптопара typ 1 мс — учесть при калибровке one-shot firing timer (TODO на железе).
 
 ### 4.5 AC/DC вспомогательное + UPS
-- **PSU1**: Mean Well **HLK-PM12** (12 В / 0.83 А, isolated 4 кВ).
-- Buck LOGIC: **TPS563201** (3.3 В / 3 А, 4.5–17 В). Вход 10 мкФ×2, выход 22 мкФ×2 + 100 нФ. Тестовые точки EN/3V3.
-- UPS path: АКБ 12 В → ideal diode **LTC4412** (или SS56 Schottky — дешевле, падение 0.5 В) OR-ing с PSU1; разряд ограничен 10.5 В (fw low-batt policy BATT_LOW_PCT=10).
+- **PSU1**: Mean Well **HLK-10M12** (12 В / **0.83 А**, 10 Вт, isolated **3000 VAC** — не 4 кВ!). Бюджет 12 В: 3 реле × 0.4 Вт = 1.2 Вт (пусковой пик ×3 на 0.5 с), buck 3.3 В при 0.6 А ≈ 2 Вт + потери → суммарно ~3.5–4 Вт непрерывно, пик при старте реле — HLK-PM12 (3 Вт/0.25 А) не годился. Рабочая температура серии −25…+60/+70 °C — **не покрывает −30 °C**; варианты: внешний блок питания в утеплённой зоне, либо выбор модуля с расширенным диапазоном (Cosar CMP-12S05 / Traco TPP 12-112, −40…+85 °C), либо прогрев от реле до старта (fw policy). Решение зафиксировать перед заказом.
+- Buck LOGIC: **TPS563201** (3.3 В / 3 А, 4.5–17 В). Вход 10 мкФ×2, выход 22 мкФ×2 + 100 нФ. Тестовые точки EN/3V3. Дроссель 4.7 мкГн ≥ 3 А (в BOM добавить).
+- UPS path: АКБ 12 В → **ideal diode LTC4412 + внешний P-MOS AO3401 (−20 В/−4 А) + schottky backup SS56** OR-ing с PSU1 (LTC4412 — контроллер, ему нужен PFET, один чип ток не пропускает). Разряд ограничен 10.5 В (fw low-batt policy BATT_LOW_PCT=10). **Заряд АКБ — внешним буферным ЗУ** (решение D5-a): on-board CC/CV отсутствует; NTC на плате остаётся для телеметрии и thermal inhibit в прошивке. На J_BATT: **предохранитель 3 A + P-FET anti-reverse (AO3401 source к +BAT)** — защита от переполюсовки.
 
 ---
 
 ## 5. Сенсорный тракт
 
 ### 5.1 Энкодер (магнитный incremental, OC-выход)
-- Pull-up 10 кОм к 3.3 В, RC 1 кОм+10 нФ прямо у модуля ESP32, затем Schmitt 74LVC1G14 (5V-tolerant inputs — можно датчик с 5 В).
-- Питание датчика стабильное; длинная линия до ворот (≤15 м) витой парой, экран к LOGIC GND.
+- Pull-up 4.7 кОм к 3.3 В (с RC 100 Ом/1 нФ до Шмитта делитель не сажает уровень: 100 Ом vs вход ГП Шмитта), затем Schmitt 74LVC1G14; датчик с 5 В-логикой — через тот же Шмитт (VDD=3.3, inputs 5 V tolerant).
+- Питание датчика стабильное; длинная линия до ворот (≤15 м) витой парой, экран к LOGIC GND; **TVS SMAJ5.0A/массив PRTR5V0U2X на каждый сигнал у разъёма** (EFT по кабелю поля).
 - На custom-плате включить PCNT0 (hw count) — fw переключается флагом `enc_use_gpio_isr=false`.
 
 ### 5.2 Концевые выключатели (независимый канал безопасности)
-- NC-контакты: wire-break = оба разомкнуты = отказ (реализовано в limit_sw.c).
-- Разъём J_LIMIT 4-pin JST-XH (SW1, SW2, 3V3 loop-back, GND), контакты IP67, кабель ≤15 м.
-- Фильтр 1 кОм/100 нФ + software debounce 10 мс.
+- NC-контакты: норма = LOW, срабатывание ИЛИ обрыв = HIGH; wire-break = оба HIGH одновременно = отказ (реализовано в limit_sw.c). Одиночный обрыв читается как «стоп», не как «достигнут концевик» — политика fw.
+- Разъём J_LIMIT 4-pin JST-XH (SW1, SW2, common, GND), контакты IP67, кабель ≤15 м, **TVS на линии** (§6).
+- Фильтр 100 Ом/100 нФ + software debounce 10 мс.
 - Концевые — единственный разрешённый hard-stop; anti-pinch по току — дополнение, не замена.
 
 ### 5.3 Токовый трансформатор (CT)
-- **CT1**: SCT-024-009 (24 A : 9 мА) split-core. Burden 33 Ом → ~0.3 В пик при 10 A RMS.
-- **AD8237** gain ≈ 5 → дифф 1.5 В → single-ended вокруг bias 1.65 В (REF3033) → LPF fc≈1 кГц → GPIO1 через R 1 кОм + TVS clamp 0.3/3.3 В.
+- **CT1**: SCT-024-009 (24 A : 9 мА) split-core. Burden 33 Ом → при 24 А RMS выход 9 мА×33 = 0.297 В RMS (≈0.42 В пик); при 10 А RMS — **0.124 В RMS**, не 0.3 В (rev A арифметика была неверна).
+- **AD8237 gain = 3** (не 5): 10 А → 0.37 В RMS diff; 24 А → 0.89 В RMS ≈ 1.26 В пик — симметрично вокруг mid-rail без клиппинга (swing ±1.65 В). Gain 5 клипповал бы уже на ~18 А. Финальный gain калибруется wizard'ом (Phase E), диапазон усиления AD8237 это покрывает.
+- **Bias mid-rail**: REF3033 — фиксированные **3.0 В** (не 1.65!). Схема: REF3033 → делитель 10к/10к (0.1 %) → rail-to-rail буфер OPA314 → **1.5 В** bias; LPF 1 кГц перед ADC. Mid-rail 1.5 В вместо 1.65 выбран из-за точного опорного деления; верхняя половина swing остаётся 1.8 В — запас под пусковой clip достаточен. *(Альтернатива: TL431+делитель или REF3012→OPA gain 1.375 — зафиксировать на схеме.)*
+- GPIO1 через R 1 кОм + **BAV99 clamp на 0/3.3 В rails** (ревизия: «TVS 0.3/3.3 В» в rev A был опечаткой).
 - Пусковой ток 18 A клиппует вход — fw трактует clip как inrush окно (`inrush_window_ms` в gate_logic.c), не как pinch.
 - Калибровка gain хранится в NVS (`current_sense_set_gain()`, wizard Phase E); до калибровки fw сам блокирует токовые защиты (fail-safe реализован).
 
 ### 5.4 Измерение батареи / NTC
-- BAT: делитель верхнее плечо 150 кОм / нижнее 100 кОм → ratio 2.5 (12.0 В → 3.0 В на GPIO2, 10.5 В → 2.6 В). **ВНИМАНИЕ:** в power_mgmt.c сейчас `BATT_DIVIDER 2.0f` — при принятии этого номинала синхронно поменять код, README и данный документ (иначе low-batt threshold врёт). Компромисс ratio 2.0 (100k/100k) оставляет 6.0 В на делителе при 12 В — выше 3.3 В ADC! Обязателен clamp или больший ratio.
-- NTC: 10 кОм B3950 epoxy sealed на корпусе АКБ, series 10 кОм upper к 3.3 В, node → GPIO8, LPF 100 нФ. fw: charge inhibit T<0/+45 °C (`power_charge_inhibited()`).
+- BAT: делитель **верхнее плечо 47 кОм / нижнее 10 кОм → ratio 5.7**, параллельно node 100 нФ. 14.4 В (заряд SLA) → 2.53 В, 12.0 В → 2.10 В, 10.5 В → 1.84 В — весь диапазон в пределах ADC 0–3.1 В с запасом. Thevenin 8.2 кОм — приемлемо для ESP32-S3 ADC (при attenuation 12 dB и образцовой ёмкости). (rev A: 150k/100k давал 4.8 В на node при 12 В — перегрузка ADC.)
+- **Синхронизация прошивки:** `BATT_DIVIDER` в `power_mgmt.c` currently **2.0f** → заменить на **5.7f**, пересчитать low-batt thresholds (10.5 В → node 1.84 В → raw ≈ 2283 LSB при полном scale 3.1 В/4096, ADC_ATTEN_DB_12). **Замечание:** существующая формула `sample()` считает `raw*3.3f/4095.0f*BATT_DIVIDER` — с калибровкой 3.3 В она систематически завышает на ~6 % против реального full-scale 12 dB (~3.1 В); после смены BATT_DIVIDER пересверить threshold'ы стендовым замером и при необходимости перейти на `adc_cali` (esp_adc/adc_cali.h) — commit кода идёт вместе с этим документом.
+- NTC: 10 кОм B3950 epoxy sealed на корпусе АКБ, series 10 кОм upper к 3.3 В, node → GPIO8 (**ADC1_CH7**), LPF 100 нФ. fw: charge inhibit T<0/+45 °C (`power_charge_inhibited()` — актуально только если D5 изменится на on-board charger).
 
 ---
 
@@ -169,89 +198,127 @@ RTC/I2C GPIO9/40, UART0 43/44, USB-C on 19/20, camera DVP (см. §7, отдел
 
 | Позиция | Обозначение | Описание |
 |---|---|---|
-| Силовая камера | J_MOTOR 3-pin screw terminal 5.0 мм (L, N, PE) | 16 A rated, shroud |
+| Силовая зона | J_MOTOR 3-pin screw terminal 5.0 мм (L, N, PE) | 16 A rated, shroud |
 | | J_ACIN 2-pin + PE, faston 6.35 мм с крышкой | fuse holder inside |
 | | DIN-рейка 35 мм | PSU, клеммы |
-| Логическая плата | J_ENC 4-pin JST-XH (A,B,+3V3,GND) | shielded twisted |
-| | J_LIMIT 4-pin JST-XH | |
-| | J_PROBE 3-pin JST-XH | optional |
-| | J_BTN 6-pin (3 кнопки + common GND) | выносная панель |
+| Логическая зона | J_ENC 4-pin JST-XH (A,B,+3V3,GND) | shielded twisted; **TVS массив PRTR5V0U2X на A/B** |
+| | J_LIMIT 4-pin JST-XH | **TVS SMAJ5.0A на каждый сигнал** |
+| | J_PROBE 3-pin JST-XH | optional; TVS обязателен (линия поля ≤15 м) |
+| | J_BTN 6-pin (3 кнопки + common GND) | выносная панель; debounce RC |
 | | USB-C 16-pin middle-mount | provisioning + console (USB-JTAG 19/20), CC resistors 5.1k |
 | | UART0 testpads TX/RX/GND | production log |
-| | J_BATT Micro-Fit 4.2 мм 2-pin | АКБ 12 В |
-| | Антенна: u.FL + chip footprint | keep-out под модулем обязателен |
-| Крепёж | 4× M3 standoffs; potting зон HV | conformal coating логики |
+| | J_BATT Micro-Fit 4.2 мм 2-pin | АКБ 12 В; **fuse 3A + anti-reverse PFET (§4.5)** |
+| | Антенна: **WROOM-1U + u.FL разъём** (решение D3; -1 версия footprint не совмещается) | keep-out под модулем обязателен |
+| Крепёж | 4× M3 standoffs (координаты — по D6); potting зон HV | conformal coating логики |
+| Тестовые точки | EN, 3V3, 12V, BAT_ADC, CT_ADC, ZC, K1..K3 node | для bring-up и КТ-производства |
 
-Компоновка: HV дорожки ≥ 3 мм (230 В, pollution degree 2); сетевой вход в углу;
-opto isolation boundary — сплошной слот 6 мм в laminate между островами; антенна
-≥ 5 см от симистора и дросселя; SI23xx MOSFET buck — thermal vias 4×0.3 мм.
+Компоновка (одна PCB, решение D2-a): HV дорожки ≥ 3 мм зазор (230 В, pollution degree 2,
+overvoltage cat II → минимум 3.2 мм clearance per IEC 60664-1); сетевой вход в углу;
+opto isolation boundary — сплошной фрезерованный слот **≥ 6.4 мм creepage** (пропил 3 мм
++ воздух по обе стороны слота) между MAINSIDE и LOGIC зонами; антенна ≥ 5 см от симистора
+и дросселя; TPS563201 buck — thermal vias 4×0.3 мм под exposed pad; силовые реле — у края
+MAINSIDE, их катушечные цепи пересекают слот только внутри изоляции корпуса реле.
+Габариты платы 100×80 мм, 4 слоя (SIG-GND-PWR-SIG), стек: prepreg 0.21 мм ×2, core 0.99 мм,
+медь 1 oz outer / 0.5 inner (токоведение 2 А трассой ≥1.5 мм); fiducials 3× Ø1 мм.
 
 ---
 
-## 7. Камера (OV5640 DVP) — build variant, НЕ в базовой плате v1
+## 7. Камера (OV5640 DVP) — отдельный spin, НЕ в базовой плате v1
 
-Модуль OV5640 через 20-pin FPC; пины из блока cam `hal_board.h`:
-XCLK 35, SIOD 34, SIOC 36, D0..D7 = 48/47/44/43/42/41/40/39, VSYNC 21*, HREF 8*, PCLK 1*.
-Звёздочки = конфликты с control-side (PROBE/NTC/CT). Решения для custom v1:
-- **вариант A (рекомендуется)**: дочерняя плата камеры, общие сигналы через analog switch / IO-expander PCA9536 с default-disconnect при boot;
-- **вариант B**: separate camera-only PCB spin (те же footprints MCU, другая трассировка).
+**Ограничение rev B (D4):** на модуле N16R8 пины GPIO33–37 заняты octal PSRAM — XCLK/SIOD/
+SIOC туда завести нельзя; GPIO39–44 заняты UART0/JTAG/I2C. Следовательно, **камера и
+octal-PSRAM взаимоисключающи на одном MCU**. Базовая плата v1 — control-only (N16R8 под
+tflite), камера реализуется одним из путей:
+
+- **вариант A (рекомендуется)**: отдельная дочерняя плата камеры на свой MCU (ESP32-S3-WROOM-1-N8, без PSRAM-конфликта) + поток JPEG по UART/I2C к контроллеру ворот;
+- **вариант B**: смена U1 базовой платы на quad-PSRAM **N16R2** — тогда GPIO33–37 свободны, но tflite-модели придётся жить во flash (скорость inference ниже);
+- **вариант C**: PCA9536/аналоговые ключи для разделения аналоговых пинов (CT/PCLK GPIO1, NTC/HREF GPIO8, PROBE/VSYNC GPIO21) — остаётся конфликтом по I2C/JTAG и не рекомендуется.
+
+Для вариантов B/C карта DVP (hal_board.h cam-блок): XCLK 35*, SIOD 34*, SIOC 36* (* — только
+при quad-PSRAM), D0..D7 = 48/47/44†/43†/42†/41†/40†/39† († UART0/JTAG/I2C — отладка теряется),
+VSYNC 21*, HREF 8*, PCLK 1* (звёздочки = конфликты с control-side, per-build jumper).
 IR-illum GPIO38 shared с STATUS_LED — перемычка JP_LED/JP_IR.
-Питание камеры 5 В (на модуле свои LDO 2.8/1.5 В) — buck TPS62A02 с 12 В, LC-фильтр.
+Питание камеры 5 В (на модуле свои LDO 2.8/1.5 В) — buck **TPS563201-5V0 вариант или MP2315**
+с 12 В (rev A ошибочно указывал TPS62A02 — у него вход 2.5–5.5 В, от 12 В он мгновенно
+выходит из строя), LC-фильтр.
 
 ---
 
 ## 8. Стратегия тестирования платы (bring-up checklist)
 
-1. **Bare-board power**: 220→12 В без нагрузки; ripple < 50 мВ; 3.3 В load step 0→350 мА — просадка < 100 мВ.
-2. **Isolation**: hi-pot 3 кВ RMS primary↔secondary 60 с ≤ 1 мА; визуальный контроль slot/creepage.
-3. **ZC chain**: scope GPIO14 vs mains — посчитать propagation delay, заложить в one-shot timer (fw TODO).
-4. **Relay logic**: dead-time 60 мс measured; mutual-lock continuity test; K3 never closes while triac conducting (scope).
-5. **Phase-angle**: RL dummy 300 Вт — sweep угла 30…170°, snubber R temp < 70 °C.
-6. **CT calibration**: known load 2/5/10 A → fit gain (wizard Phase E); проверить clip на 6× пуске.
-7. **Encoder/limits**: эмуляция кабеля 15 м, EFT 1 кВ на линию.
-8. **UPS switchover**: mains cut at worst phase → det ≤ 10 мс, relay state preserved.
-9. **Thermal soak**: 60 °C, 20 мин непрерывных циклов, NTC telemetry sane.
-10. **EMC pre-scan**: CISPR 32 class B, near-field probes на сетевых проводах.
+1. **Bare-board power**: 230→12 В без нагрузки; ripple < 50 мВ; 3.3 В load step 0→350 мА — просадка < 100 мВ.
+2. **Isolation**: hi-pot 3 кВ RMS primary↔secondary 60 с ≤ 1 мА (проходят: HLK-10M12, оптроны, reinforced-реле — см. §4.3); визуальный контроль slot/creepage ≥ 6.4 мм.
+3. **ZC chain**: scope GPIO14 vs mains — проверить амплитуду импульсов (I_LED ≈ 1.7 мА), посчитать propagation delay, заложить в one-shot timer (fw TODO).
+4. **Relay logic**: dead-time 60 мс measured; mutual-lock (комплементарные драйверы) continuity test; K3 never closes while triac conducting (scope).
+5. **Phase-angle**: RL dummy 300 Вт — sweep угла 30…170°, snubber R temp < 70 °C, triac case < 90 °C.
+6. **CT calibration**: known load 2/5/10/20 A → fit gain (wizard Phase E); проверить clip на 6× пуске; сверка mid-rail 1.5 В ±10 мВ.
+7. **Encoder/limits**: эмуляция кабеля 15 м, EFT 1 кВ на линию; wire-break policy test (оба HIGH → STOP+FAULT).
+8. **UPS switchover**: mains cut at worst phase → det ≤ 50 мс (бюджет переписан, см. §4.4), relay state preserved, brown-out логики нет (hold-up buck ≥ 100 мс при 12 В in).
+9. **Thermal soak**: 60 °C, 20 мин непрерывных циклов, NTC telemetry sane, triac heatsink ≤ T_max−20 К.
+10. **EMC pre-scan**: CISPR 32 class B, near-field probes на сетевых проводах; EFT/surge по §1.1.
 
 ---
 
-## 9. BOM (ключевые позиции, rev A)
+## 9. BOM (ключевые позиции, rev B)
 
 | Ref | Part | Qty | Note |
 |---|---|---|---|
-| U1 | ESP32-S3-WROOM-1-N16R8 | 1 | |
-| TR1 | BTA16-600BW | 1 | TO-220 insulated |
-| OPTO1 | MOC3041 | 1 | random-phase gate drive |
+| U1 | ESP32-S3-WROOM-1-N16R8 **(или -1U-N16R8, D3)** | 1 | один footprint, не оба сразу |
+| TR1 | BTA16-800BW | 1 | TO-220 insulated, snubberless |
+| OPTO1 | **MOC3023** | 1 | random-phase gate drive (NOT MOC3041!) |
 | OPTO2 | H11AA1 | 1 | ZC / mains present |
-| K1..K3 | Omron G5NB-1A-E 12VDC (K3 gold-clad) | 3 | |
-| PSU1 | Mean Well HLK-PM12 | 1 | isolated 12 V |
-| U2 | TPS563201 | 1 | 3.3 V buck |
-| U3 | AD8237 | 1 | CT front-end |
-| U4 | REF3033 | 1 | 1.65 V bias (÷2 from 3.3 В) |
+| K1..K3 | reinforced-изоляция реле ≥10 А AgSnO2 (Panasonic AY-A / G6K-2F-F*) | 3 | *изолировать по даташиту, см. §4.3 |
+| Q1..Q4 | 2N7002/SOT-23 | 4 | 3 реле + зуммер |
+| Q5,Q6 | 74LVC1G14 (dual role: Schmitt enc + inverter lock) | 2 | взаимоблокировка драйверов |
+| Q7,Q8 | AO3401 (P-MOS, −20 В) | 2 | LTC4412 ideal-diode + anti-reverse BAT |
+| PSU1 | Mean Well **HLK-10M12** (или Traco TPP 12-112, −40 °C) | 1 | isolated 3 kVAC, 10 Вт |
+| U2 | TPS563201 | 1 | 3.3 V buck + дроссель 4.7 µH/3 A |
+| U3 | AD8237 | 1 | CT front-end, gain 3 |
+| U4 | REF3033 + OPA314 | 1+1 | 3.0 V ref → ÷2 буфер → 1.5 V bias |
 | CT1 | SCT-024-009 | 1 | split-core |
-| RTC1 | DS3231M | 1 | |
+| RTC1 | DS3231M + держатель CR2032 + 220 µF supercap опц. | 1 | |
 | U5 | 24LC256 | 1 | EEPROM резерв NVS |
-| Q1..Q5 | 2N7002 / SS8050 | 5 | relay/buzzer drivers |
-| D | SS54, 1N4148WS, DB3, SMBJ26A | — | |
-| F1 | T5A/250V holder | 1 | |
-| RV1 | 14D471K | 1 | |
-| CX1 | X2 0.47 µF | 1 | |
-| CY1-4 | Y2 2.2 nF | 4 | |
+| U6 | LTC4412 | 1 | ideal diode controller |
+| D | SS54 ×5, SS56 ×1, 1N4148WS, BAV99 ×2, SMBJ26A | — | DB3 удалён (см. §4.2) |
+| F1 | T5A/250V holder | 1 | time-lag |
+| F2 | 3A/250V SMD fuse (J_BATT line) | 1 | |
+| RV1 | 14D471K | 1 | **300 VAC** working |
+| CX1 | X2 0.47 µF + bleed 1M/0.5W | 1+1 | |
+| CY1-2 | **Y1** 2.2 nF (или 2×Y2 series) | 2 | |
 | LF1 | CM choke 10 mH | 1 | |
+| TVS field | PRTR5V0U2X ×2, SMAJ5.0A ×4 | — | энкодер/лимиты/probe |
 | NTC1 | 10k B3950 epoxy | 1 | на АКБ |
-| BAT1 | 12V 1.2Ah SLA (или Li-ion 3S) | 1 | external |
+| BAT1 | 12V 1.2Ah SLA (или Li-ion 3S) + внешний буферный ЗУ | 1 | charge off-board (D5-a) |
 
 ---
 
 ## 10. Открытые вопросы / решения до layout
 
-1. **Battery divider ratio** (§5.4): принять 2.5 и синхронно поменять `BATT_DIVIDER` в коде; иначе ADC перегружен при полном АКБ.
-2. **CT gain & burden** (§5.3): финальный пересчёт + wizard-калибровка; TVS clamp обязателен.
-3. **K3 zero-current window** — подтверждение осциллографом; иначе убрать K3 (экономия marginal).
-4. **Camera interconnect** — выбрать вариант A/B (§7) до трассировки.
-5. **Strapping GPIO45/46** — не выводить на внешние цепи.
-6. **PSRAM/GPIO33-37 keep-out** — сверка footprints перед release.
-7. **One-shot firing timer** — калибровка задержки ZC→угол на железе (fw TODO).
+Архитектурные (D1–D6 в §0) — приоритет выше всего остального:
+
+1. **D1** аварийное закрытие от АКБ при AC-моторе невозможно — подтвердить «створка стоит на месте» или менять актуатор.
+2. **D3/D4** финальный part number U1 (-1 vs -1U; N16R8 vs N16R2 под камеру).
+3. **PSU temp range**: HLK-10M12 не идёт при −30 °C — выбрать Traco TPP / Cosar либо внешний БП (§4.5).
+
+Технические подтверждения (часть закрыта в rev B, осталось железо-зависимое):
+
+4. **Battery divider ratio 5.7** (§5.4): принято; синхронная правка `BATT_DIVIDER` 2.0f→5.7f в power_mgmt.c + thresholds — отдельный commit кода вместе с этим документом.
+5. **CT gain & burden** (§5.3): gain 3 принят проектно; финальная калибровка wizard'ом на стенде; mid-rail 1.5 В схема (REF3033÷2+OPA314) — проверить offset drift при −30 °C.
+6. **K3 zero-current window** — подтверждение осциллографом; иначе убрать K3 (экономия ~3.8 Вт marginal против риска залипания).
+7. **Reinforced-реле**: до заказа получить даташит с isolation ≥ 4 кВ coil↔contacts и пройти §8.2 на макете; если нет — переносить реле целиком в MAINSIDE с оптронным управлением катушки.
+8. **Strapping GPIO45/46** — не выводить на внешние цепи.
+9. **PSRAM/GPIO33-37 keep-out** — сверка footprints перед release.
+10. **One-shot firing timer** — калибровка задержки ZC→угол на железе (fw TODO).
+11. **MOC3023 I_F при −30 °C** — LED деградирует на морозе; заложить ±20 % запас (220 Ом выбран с расчётом 9.5 мА при IFT 5 мА; проверка на макете, шаг 8).
+
+---
+
+## 11. Журнал ревизий
+
+| Rev | Дата | Изменения |
+|---|---|---|
+| A | 2026-10-29 | Первый выпуск: pin-map sync, силовая часть, BOM, bring-up. |
+| B | 2026-10-29 | Закрыты ревью-дефекты: P0-1..P0-19 (MOC3023 вместо MOC3041; R_LED 220 Ом; делитель BAT 47k/10k ratio 5.7; bias 1.5 В через REF3033÷2+буфер; ZC divider 2×68k; mains-loss бюджет 30–50 мс; UPS≠закрытие створки (D1); заряд off-board (D5); GPIO8=ADC1_CH7; камера incompatibility (D4); реле reinforced + logic-level mutual lock; отказ от gold-clad K3; 2N7002 для буззера; HLK-10M12; одна плата (D2); один антеннный footprint (D3); TPS62A02→MP2315; GPIO10=LOGIC domain). P1-1..P1-17 (MOV 300 VAC; Y1; CT арифметика/gain 3; DB3 убран; dV/dt snubberless; потери triac 3.8 Вт; fuse I²t; NC полярность; RC/pull-up энкодера; SI23xx→TPS563201; LTC4412+PFET; BAT fuse/anti-reverse; TVS field lines; Thevenin 8.2k; BAV99; 61000-4-6/4-8; bleed R). P2 редактура. Добавлены §0 open decisions, §11 журнал, тестовые точки, стек/габариты. |
 
 ---
 *Документ составлен по состоянию репозитория (pin-map = hal_board.h коммита 11487b6); при изменении прошивки обновлять §3, §5, §7.*
